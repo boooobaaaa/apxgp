@@ -69,27 +69,14 @@
     },
     {
       "id": "m3",
-      "name": "Kai Tanaka",
-      "role": "Reserve Driver",
-      "number": "41",
-      "nationality": "Japan",
+      "name": "Adam Jones",
+      "role": "Deputy Team Principle",
+      "nationality": "America",
       "is_driver": true,
-      "bio": "Our reserve and development driver, Kai spends most weekends in the simulator helping dial in the car setup.",
-      "birthdate": "2005-01-22",
-      "hometown": "Suzuka, Japan",
+      "hometown": "Denver, Colorado",
       "sort": 2,
-      "stats": {
-        "starts": 8,
-        "wins": 0,
-        "podiums": 1,
-        "poles": 0,
-        "fastest_laps": 1,
-        "points": 46,
-        "championships": 0,
-        "best_finish": 3,
-        "avg_finish": 9.6,
-        "dnfs": 1
-      }
+      "stats": {},
+      "photo": "uploads/2026/mwcph1iqsw4vd.png"
     },
     {
       "id": "m4",
@@ -380,7 +367,7 @@
   ],
   "media": [],
   "_rev": {
-    "id": "whe83uty",
-    "at": "2026-11-11T22:26:05.852Z"
+    "id": "4um9n018",
+    "at": "2026-11-11T22:44:05.617Z"
   }
 }
