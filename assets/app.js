@@ -79,7 +79,7 @@ function applyTheme() {
   $('#footer').innerHTML = `<div class="wrap footer-inner">
     <div>${logo ? `<img class="footer-logo" src="${esc(logo)}" alt="">` : ''}<div class="footer-brand">${esc(s.team_name)}</div><div class="muted">${esc(s.tagline)}</div></div>
     <div class="footer-links">${socials}</div>
-    <div class="muted small footer-meta">© ${new Date().getFullYear()} ${esc(s.team_name)} · <a href="admin.html" class="footer-admin">Team admin</a></div></div>`;
+    <div class="muted small footer-meta">© ${new Date().getFullYear()} ${esc(s.team_name)} · <a href="admin.html" class="footer-admin">Admin Console</a></div></div>`;
 }
 
 function renderAccount() {
