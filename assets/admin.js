@@ -90,7 +90,7 @@ const GH = {
     let head = await GH.headSha();
     if (head !== A.baseSha) {
       const remote = await GH.readFile('data/site.json', head);
-      if (remote !== A.baseText && !confirm('The site content was changed somewhere else (another admin, or an edit on GitHub) since you opened the console.\n\nPublish anyway and overwrite those content changes with yours?')) {
+      if (remote !== A.baseText && !(await uiConfirm('Someone else (another admin, or an edit on GitHub) changed the site since you opened the console. Publishing now will replace their content changes with yours.', { title: 'Site was changed elsewhere', ok: 'Publish mine anyway', danger: true }))) {
         throw new Error('Publish cancelled. Reload the console to get the latest content.');
       }
     }
@@ -176,6 +176,48 @@ async function addAudio(file) {
   A.pending.set(path, file);
   A.previews.set(path, URL.createObjectURL(file));
   return path;
+}
+
+// ================================================================ in-console dialogs
+// Styled replacement for the browser's confirm() pop-up. Resolves true / false.
+function uiConfirm(message, { title = 'Are you sure?', ok = 'Confirm', cancel = 'Cancel', danger = false } = {}) {
+  return new Promise((resolve) => {
+    const ov = document.createElement('div');
+    ov.className = 'ui-dialog';
+    ov.innerHTML = `<div class="ui-dialog-box" role="alertdialog" aria-modal="true" aria-labelledby="uiDlgT">
+      <h3 id="uiDlgT">${esc(title)}</h3><p>${esc(message)}</p>
+      <div class="ui-dialog-actions"><button type="button" class="btn btn-ghost" data-v="0">${esc(cancel)}</button>
+      <button type="button" class="btn ${danger ? 'btn-danger' : 'btn-primary'}" data-v="1">${esc(ok)}</button></div></div>`;
+    document.body.appendChild(ov);
+    const done = (v) => { window.removeEventListener('keydown', key, true); ov.remove(); resolve(v); };
+    const key = (e) => {
+      if (e.key === 'Escape') { e.stopImmediatePropagation(); done(false); }
+      if (e.key === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); done(true); }
+    };
+    window.addEventListener('keydown', key, true);
+    ov.addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (b) done(b.dataset.v === '1'); else if (e.target === ov) done(false); });
+    setTimeout(() => $('[data-v="1"]', ov).focus(), 20);
+  });
+}
+
+// Describe what changed since the last publish, e.g. "Update Team members (1 edited), News (1 added)"
+function changeSummary() {
+  let base = {};
+  try { base = JSON.parse(A.baseText); } catch { /* first publish */ }
+  const names = { members: 'Team members', races: 'Race schedule', drivers: "Drivers' standings", constructors: "Constructors' standings", news: 'News', media: 'Media' };
+  const parts = [];
+  for (const [k, label] of Object.entries(names)) {
+    const before = new Map((base[k] || []).map((r) => [r.id, JSON.stringify(r)]));
+    const after = A.data[k] || [];
+    let added = 0, edited = 0;
+    for (const r of after) { if (!before.has(r.id)) added++; else if (before.get(r.id) !== JSON.stringify(r)) edited++; before.delete(r.id); }
+    const removed = before.size;
+    const bits = [added && `${added} added`, edited && `${edited} edited`, removed && `${removed} removed`].filter(Boolean);
+    if (bits.length) parts.push(`${label} (${bits.join(', ')})`);
+  }
+  const { _rev: _a, ...sNow } = A.data.settings || {};
+  if (JSON.stringify(sNow) !== JSON.stringify(base.settings || {})) parts.push('Site settings');
+  return parts.length ? `Update ${parts.join(', ')}` : 'Update site content';
 }
 
 // ================================================================ photo editor
@@ -626,14 +668,14 @@ function shell() {
     <div class="drawer" id="drawer" hidden><div class="drawer-bg"></div><div class="drawer-panel" id="drawerPanel"></div></div>
   </div>`;
   $('#out').onclick = async () => {
-    if (A.dirty && !confirm('Discard unpublished changes and sign out?')) return;
+    if (A.dirty && !(await uiConfirm('You have changes that haven\'t been published yet. Signing out will throw them away.', { title: 'Sign out?', ok: 'Sign out', danger: true }))) return;
     A.dirty = false;
     if (Auth.enabled) await Auth.signOut(); else store.del('apx_gh_token');
     location.reload();
   };
   $('#publish').onclick = publish;
-  $('#discard').onclick = () => {
-    if (!confirm('Throw away all unpublished changes?')) return;
+  $('#discard').onclick = async () => {
+    if (!(await uiConfirm('All changes since your last publish will be thrown away.', { title: 'Discard changes?', ok: 'Discard', danger: true }))) return;
     A.data = JSON.parse(A.baseText); normalise(A.data); A.pending.clear(); setDirty(false); applyTheme(); route();
   };
   wireThemeBtn();
@@ -699,11 +741,11 @@ function setDirty(v = true) { A.dirty = v; const b = $('#pubBar'); if (b) b.hidd
 
 async function publish() {
   const btn = $('#publish');
-  const msg = prompt('Short description of your changes (for the history):', 'Update site content');
-  if (msg === null) return;
+  if (btn.disabled) return;
   btn.disabled = true;
+  const by = Auth.enabled && Auth.state.profile ? ` — by ${Auth.state.profile.username}` : '';
   try {
-    const r = await GH.publish(msg || 'Update site content', (s) => (btn.textContent = s));
+    const r = await GH.publish(changeSummary() + by, (s) => (btn.textContent = s));
     setDirty(false);
     toast(`Saved to GitHub${r.uploaded ? ` (${r.uploaded} file${r.uploaded > 1 ? 's' : ''} uploaded)` : ''} — the live site updates in 1–3 minutes. Watch the status in the sidebar.`, 'ok');
     watchLive(r.rev);
@@ -801,9 +843,9 @@ function listView(main, s) {
   $('#new').onclick = () => openForm(s, null);
   $('#new2')?.addEventListener('click', () => openForm(s, null));
   $$('[data-edit]', main).forEach((b) => (b.onclick = () => openForm(s, A.data[s.res].find((r) => r.id === b.dataset.edit))));
-  $$('[data-del]', main).forEach((b) => (b.onclick = () => {
+  $$('[data-del]', main).forEach((b) => (b.onclick = async () => {
     const list = A.data[s.res], r = list.find((x) => x.id === b.dataset.del);
-    if (!confirm(`Delete "${r.name || r.title || r.driver || r.team}"?`)) return;
+    if (!(await uiConfirm(`"${r.name || r.title || r.driver || r.team}" will be removed when you publish.`, { title: `Delete this ${s.singular}?`, ok: 'Delete', danger: true }))) return;
     list.splice(list.indexOf(r), 1);
     setDirty(); toast('Deleted — publish to make it live', 'ok'); route();
   }));
@@ -1008,7 +1050,7 @@ function mediaView(main) {
       try { const p = await adjustExisting(m.file, 'free'); if (p) { m.file = p; setDirty(); toast('Photo updated — press Publish to put it live', 'ok'); route(); } }
       catch (err) { toast(err.message, 'err'); }
     };
-    $('[data-del]', el).onclick = () => { if (!confirm('Delete this photo?')) return; A.data.media.splice(A.data.media.indexOf(m), 1); setDirty(); el.remove(); toast('Deleted — publish to remove it from the site', 'ok'); };
+    $('[data-del]', el).onclick = async () => { if (!(await uiConfirm('It will be removed from the Media page when you publish.', { title: 'Delete this photo?', ok: 'Delete', danger: true }))) return; A.data.media.splice(A.data.media.indexOf(m), 1); setDirty(); el.remove(); toast('Deleted — publish to remove it from the site', 'ok'); };
     $('[data-copy]', el).onclick = (e) => navigator.clipboard?.writeText(e.target.dataset.copy).then(() => toast('Path copied — paste it into any image field', 'ok'), () => toast(e.target.dataset.copy));
   });
 }
@@ -1043,20 +1085,20 @@ async function fansView(main) {
       <td class="muted small">${u.created ? esc(fmtDate(new Date(u.created).toISOString().slice(0, 10))) : '—'}</td>
       <td class="row-actions">${u.uid === me ? '' : '<button class="btn btn-sm btn-ghost danger" data-del>Remove</button>'}</td></tr>`).join('')}</tbody></table></div>`
     : '<div class="empty panel">No accounts yet.</div>'}`;
-  $('#newTok').onclick = () => {
-    if (A.dirty && !confirm('You have unpublished changes. Replacing the token reloads the console and discards them. Continue?')) return;
+  $('#newTok').onclick = async () => {
+    if (A.dirty && !(await uiConfirm('Replacing the token reloads the console, which throws away changes you haven\'t published yet.', { title: 'Replace GitHub token?', ok: 'Continue', danger: true }))) return;
     A.dirty = false; A.data = null; githubSetup({ owner: A.gh.owner, repo: A.gh.repo, branch: A.gh.branch });
   };
   $$('tr[data-uid]', main).forEach((tr) => {
     const uid = tr.dataset.uid, name = $('b', tr).textContent;
     $('.adm-toggle', tr).onchange = async (e) => {
       const on = e.target.checked;
-      if (on && !confirm(`Give ${name} admin access? They'll be able to edit and publish the whole site.`)) { e.target.checked = false; return; }
+      if (on && !(await uiConfirm(`${name} will be able to edit and publish the whole site.`, { title: 'Give admin access?', ok: 'Make admin' }))) { e.target.checked = false; return; }
       try { await Auth.setAdmin(uid, on); toast(on ? `${name} is now an admin` : `Removed admin access from ${name}`, 'ok'); }
       catch (err) { e.target.checked = !on; toast(err.message, 'err'); }
     };
     $('[data-del]', tr)?.addEventListener('click', async () => {
-      if (!confirm(`Remove ${name} from this list? This also removes their admin access. (Their login itself can be deleted in Firebase → Authentication.)`)) return;
+      if (!(await uiConfirm(`${name} will lose admin access and be removed from this list. (Their login itself can be deleted in Firebase → Authentication.)`, { title: 'Remove this account?', ok: 'Remove', danger: true }))) return;
       try { if (adminSet.has(uid)) await Auth.setAdmin(uid, false); await Auth.deleteUser(uid); tr.remove(); toast('Removed', 'ok'); }
       catch (err) { toast(err.message, 'err'); }
     });
