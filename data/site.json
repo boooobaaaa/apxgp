@@ -9,13 +9,16 @@
     "background_color": "#222222",
     "logo": "brand/apx-gp-logo.png",
     "hero_image": "",
-    "about": "Welcome to the official home of our team. Change all of this from the admin console.",
+    "about": "Home of APXGP.",
     "instagram": "",
     "twitter": "",
     "youtube": "",
     "twitch": "",
     "starting_coins": 500,
-    "daily_coins": 100
+    "daily_coins": 100,
+    "music_file": "",
+    "music_volume": 35,
+    "music_title": ""
   },
   "members": [
     {
