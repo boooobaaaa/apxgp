@@ -2,7 +2,6 @@
  * Admin console for the GitHub Pages build.
  * Edits are kept in memory; "Publish" writes data/site.json + any new images to the
  * GitHub repository as ONE commit. GitHub Pages then rebuilds the live site (~1 minute).
- * Pack prices and coin settings are mirrored into Firebase so its security rules can enforce them.
  */
 'use strict';
 
@@ -13,8 +12,6 @@ const A = {
   dirty: false, section: 'dashboard',
 };
 const root = $('#admin');
-const RARITIES = ['common', 'rare', 'circuit', 'signature'];
-const RARITY_OPTS = () => RARITIES.map((r) => [r, RARITY_LABEL[r]]);
 const STAT_FIELDS = [
   { key: 'starts', label: 'Race Starts' }, { key: 'wins', label: 'Wins' }, { key: 'podiums', label: 'Podiums' },
   { key: 'poles', label: 'Pole Positions' }, { key: 'fastest_laps', label: 'Fastest Laps' }, { key: 'points', label: 'Career Points' },
@@ -138,7 +135,9 @@ const GH = {
 // Fill in missing collections / defaults so older or hand-edited files still work
 function normalise(d) {
   d.settings = d.settings || {};
-  for (const k of ['members', 'races', 'drivers', 'constructors', 'news', 'media', 'cards', 'packs']) d[k] = Array.isArray(d[k]) ? d[k] : [];
+  for (const k of ['members', 'races', 'drivers', 'constructors', 'news', 'media']) d[k] = Array.isArray(d[k]) ? d[k] : [];
+  // card packs were removed from the site — tidy away their old data
+  delete d.cards; delete d.packs; delete d.settings.starting_coins; delete d.settings.daily_coins;
 }
 
 // ================================================================ images
@@ -249,34 +248,7 @@ const SECTIONS = {
     ],
   },
   media: { title: 'Media library', icon: '🖼', help: 'Add photos for the Media page. Group them with albums — the site shows album filters automatically. Large photos are resized automatically.' },
-  cards: {
-    title: 'Gacha cards', icon: '🃏', res: 'cards', singular: 'card', idp: 'c', cardsView: true,
-    help: 'Cards use the linked member\'s photo unless you upload card art. Circuit Specials show the circuit name and a track overlay; Signature cards get a holographic finish and autograph.',
-    fields: () => [
-      { k: 'name', label: 'Card name', req: true }, { k: 'subtitle', label: 'Subtitle', ph: 'Race Day, Monza Special, Signed Edition…' },
-      { k: 'rarity', label: 'Rarity', type: 'select', opts: RARITY_OPTS(), half: true },
-      { k: 'member_id', label: 'Linked team member', type: 'select', half: true, opts: [['', '— none —'], ...A.data.members.map((m) => [m.id, m.name])] },
-      { k: 'number', label: 'Number shown on card', half: true }, { k: 'circuit', label: 'Circuit (Circuit Special only)', half: true },
-      { k: 'image', label: 'Card art (optional)', type: 'image' },
-      { k: 'flavor', label: 'Flavour text', type: 'textarea', rows: 2 },
-      { k: 'active', label: 'Active (can be pulled from packs)', type: 'check', def: true },
-    ],
-  },
-  packs: {
-    title: 'Packs & odds', icon: '🎁', res: 'packs', singular: 'pack', idp: 'p',
-    help: 'Odds are relative weights — they don\'t need to add up to 100. The last card of a pack is upgraded to the guaranteed rarity (or better) if set. Prices are synced to Firebase when you publish.',
-    sort: (a, b) => (Number(a.sort) || 0) - (Number(b.sort) || 0),
-    cols: [['name'], ['cost', 'Cost'], ['size', 'Cards'], ['guaranteed', 'Guarantee', 'rarity'], ['odds', 'Odds', 'odds'], ['active', 'Live', 'bool']],
-    fields: () => [
-      { k: 'name', label: 'Pack name', req: true }, { k: 'description', label: 'Description', type: 'textarea', rows: 2 },
-      { k: 'cost', label: 'Cost (coins)', type: 'number', half: true, def: 100 }, { k: 'size', label: 'Cards per pack (1–10)', type: 'number', half: true, def: 3 },
-      { k: 'odds', label: 'Drop odds (weights)', type: 'odds' },
-      { k: 'guaranteed', label: 'Guaranteed minimum rarity (last card)', type: 'select', half: true, opts: [['', 'None'], ...RARITY_OPTS()] },
-      { k: 'sort', label: 'Sort order', type: 'number', half: true },
-      { k: 'active', label: 'Available in the shop', type: 'check', def: true },
-    ],
-  },
-  fans: { title: 'Fans & admins', icon: '👥', help: 'Fan accounts, coins, admin access and pack prices live in Firebase.' },
+  fans: { title: 'Admins', icon: '👥', help: 'Who can sign in to this console, and the GitHub connection used for publishing.' },
 };
 
 // ================================================================ boot / login
@@ -297,7 +269,7 @@ const TOKEN_HELP = `<details class="help small"><summary>How do I get a token?</
   <li>Generate, copy it and paste it here.</li></ol></details>`;
 
 function boot() {
-  if (Gacha.enabled) return firebaseBoot();
+  if (Auth.enabled) return firebaseBoot();
   const det = GH.detect();
   const token = store.get('apx_gh_token');
   if (token && det.owner && det.repo) { A.gh = { ...det, token }; return connect((err) => tokenScreen(det, err)); }
@@ -307,53 +279,64 @@ function boot() {
 let bootUid = null;
 async function firebaseBoot() {
   loadingScreen('Checking your account…');
-  await Gacha.init();
-  const st = await Gacha.whenReady();
+  await Auth.init();
+  const st = await Auth.whenReady();
   bootUid = st.user ? st.user.uid : null;
   // re-run whenever the signed-in account changes (sign in / sign out)
   if (!firebaseBoot.watching) {
     firebaseBoot.watching = true;
-    Gacha.onChange((s) => { const id = s.user ? s.user.uid : null; if (id !== bootUid && !A.data) firebaseBoot(); });
+    Auth.onChange((s) => { const id = s.user ? s.user.uid : null; if (id !== bootUid && !A.data) firebaseBoot(); });
   }
   if (!st.user) return adminSignIn();
-  if (!(await Gacha.isAdmin())) return notAdminScreen(st.user);
+  if (!(await Auth.isAdmin())) return notAdminScreen(st.user);
   let gh = null;
-  try { gh = await Gacha.getGithub(); } catch (e) { console.error(e); }
+  try { gh = await Auth.getGithub(); } catch (e) { console.error(e); }
   const det = GH.detect();
   if (!gh || !gh.token) return githubSetup(det);
   A.gh = { owner: gh.owner || det.owner, repo: gh.repo || det.repo, branch: gh.branch || det.branch, token: gh.token };
   connect((err) => githubSetup({ owner: A.gh.owner, repo: A.gh.repo, branch: A.gh.branch }, err));
 }
 
-function adminSignIn(error = '') {
-  root.innerHTML = authShell(`<h2>Admin sign in</h2>
-    <p class="muted small">Sign in with your APX GP website account. Only accounts that have been given admin access can open the console.</p>
+function adminSignIn(error = '', mode = 'login') {
+  const reg = mode === 'register';
+  root.innerHTML = authShell(`<h2>${reg ? 'Create an account' : 'Admin sign in'}</h2>
+    <p class="muted small">${reg ? 'Create an account, then ask an existing admin to switch on admin access for you.' : 'Sign in with your APX GP account. Only accounts that have been given admin access can open the console.'}</p>
     ${error ? `<div class="alert">${esc(error)}</div>` : ''}
-    <form id="f"><label>Email<input name="email" type="email" required autocomplete="email"></label>
-    <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
-    <button class="btn btn-primary btn-block">Sign in</button>
-    ${Gacha.googleEnabled ? '<button type="button" class="btn btn-ghost btn-block google-btn" id="g">Continue with Google</button>' : ''}</form>
-    <p class="small muted">No account yet? Create one on the site's <a class="link-btn" href="./#/login">sign-in page</a>, then ask an admin to give you access.</p>`);
+    <form id="f">${reg ? '<label>Your name<input name="name" required maxlength="32" autocomplete="name"></label>' : ''}
+    <label>Email<input name="email" type="email" required autocomplete="email"></label>
+    <label>Password<input name="password" type="password" required minlength="6" autocomplete="${reg ? 'new-password' : 'current-password'}"></label>
+    <button class="btn btn-primary btn-block">${reg ? 'Create account' : 'Sign in'}</button>
+    ${Auth.googleEnabled ? '<button type="button" class="btn btn-ghost btn-block google-btn" id="g">Continue with Google</button>' : ''}</form>
+    <p class="small muted center">${reg ? 'Already have an account?' : 'No account yet?'} <button type="button" class="link-btn" id="swap">${reg ? 'Sign in' : 'Create account'}</button>
+    ${reg ? '' : ' · <button type="button" class="link-btn" id="forgot">Forgot password?</button>'}</p>`);
+  $('#swap').onclick = () => adminSignIn('', reg ? 'login' : 'register');
+  $('#forgot')?.addEventListener('click', async () => {
+    const email = $('#f').email.value.trim();
+    if (!email) return toast('Type your email first', 'err');
+    try { await Auth.resetPassword(email); toast('Password reset email sent', 'ok'); } catch (err) { toast(err.message, 'err'); }
+  });
   $('#f').onsubmit = async (e) => {
     e.preventDefault();
-    const b = $('#f button.btn-primary'); b.disabled = true; b.textContent = 'Signing in…';
-    try { await Gacha.signIn(e.target.email.value.trim(), e.target.password.value); }
-    catch (err) { adminSignIn(err.message); }
+    const f = e.target, b = $('#f button.btn-primary'); b.disabled = true; b.textContent = reg ? 'Creating…' : 'Signing in…';
+    try {
+      if (reg) await Auth.register(f.name.value, f.email.value.trim(), f.password.value);
+      else await Auth.signIn(f.email.value.trim(), f.password.value);
+    } catch (err) { adminSignIn(err.message, mode); }
   };
-  $('#g')?.addEventListener('click', async () => { try { await Gacha.google(); } catch (err) { adminSignIn(err.message); } });
+  $('#g')?.addEventListener('click', async () => { try { await Auth.google(); } catch (err) { adminSignIn(err.message, mode); } });
 }
 
 function notAdminScreen(user) {
   root.innerHTML = authShell(`<h2>No admin access</h2>
     <p class="small">You're signed in as <b>${esc(user.email || user.uid)}</b>, but this account hasn't been given admin access.</p>
-    <p class="small muted">Ask an existing admin to open <b>Fans &amp; admins</b> in the console and tick "Admin" next to your name.</p>
+    <p class="small muted">Ask an existing admin to open <b>Admins</b> in the console and switch on "Admin" next to your name.</p>
     <details class="help small"><summary>Setting up the very first admin?</summary>
       <p>In the Firebase console → <b>Firestore Database</b> → <b>Start collection</b> <code>admins</code> → Document ID:</p>
       <div class="uid-box"><code id="uid">${esc(user.uid)}</code><button class="btn btn-sm btn-ghost" id="cpy" type="button">Copy</button></div>
       <p>Add a field <code>note</code> = <code>owner</code>, save, then reload this page.</p></details>
     <button class="btn btn-ghost btn-block" id="so">Sign in with a different account</button>`);
   $('#cpy').onclick = () => navigator.clipboard?.writeText(user.uid).then(() => toast('Copied', 'ok'));
-  $('#so').onclick = () => Gacha.signOut();
+  $('#so').onclick = () => Auth.signOut();
 }
 
 function githubSetup(det, error = '') {
@@ -367,7 +350,7 @@ function githubSetup(det, error = '') {
     <button class="btn btn-primary btn-block">Connect &amp; save</button></form>
     ${TOKEN_HELP}
     <button class="link-btn small" id="so" type="button">Sign out</button>`);
-  $('#so').onclick = () => Gacha.signOut();
+  $('#so').onclick = () => Auth.signOut();
   $('#f').onsubmit = async (e) => {
     e.preventDefault();
     const f = e.target;
@@ -375,7 +358,7 @@ function githubSetup(det, error = '') {
     loadingScreen('Connecting to GitHub…');
     try {
       await GH.connect();
-      await Gacha.setGithub({ owner: A.gh.owner, repo: A.gh.repo, token: A.gh.token });
+      await Auth.setGithub({ owner: A.gh.owner, repo: A.gh.repo, token: A.gh.token });
       await GH.load();
       shell();
       toast('GitHub connected — saved for all admins', 'ok');
@@ -431,7 +414,7 @@ function shell() {
       <a class="brand" href="${esc(site)}" target="_blank" title="View site">${brandHtml()}</a>
       <nav id="side">${Object.entries(SECTIONS).map(([k, s]) => `<a href="#${k}" data-s="${k}"><i>${s.icon}</i>${s.title}</a>`).join('')}</nav>
       <div id="liveStatus" class="live-status"></div>
-      <div class="adm-user"><span class="muted small">${Gacha.enabled ? 'Signed in as' : 'Connected to'}</span><b>${esc(Gacha.enabled ? (Gacha.state.profile?.username || Gacha.state.user?.email || '') : `${A.gh.owner}/${A.gh.repo}`)}</b>
+      <div class="adm-user"><span class="muted small">${Auth.enabled ? 'Signed in as' : 'Connected to'}</span><b>${esc(Auth.enabled ? (Auth.state.profile?.username || Auth.state.user?.email || '') : `${A.gh.owner}/${A.gh.repo}`)}</b>
         <div class="adm-user-actions"><a class="btn btn-sm btn-ghost" href="${esc(site)}" target="_blank">View site ↗</a><button class="btn btn-sm btn-ghost" id="out">Sign out</button></div></div>
     </aside>
     <main class="adm-main" id="main"></main>
@@ -446,7 +429,7 @@ function shell() {
   $('#out').onclick = async () => {
     if (A.dirty && !confirm('Discard unpublished changes and sign out?')) return;
     A.dirty = false;
-    if (Gacha.enabled) await Gacha.signOut(); else store.del('apx_gh_token');
+    if (Auth.enabled) await Auth.signOut(); else store.del('apx_gh_token');
     location.reload();
   };
   $('#publish').onclick = publish;
@@ -519,27 +502,13 @@ async function publish() {
   const msg = prompt('Short description of your changes (for the history):', 'Update site content');
   if (msg === null) return;
   btn.disabled = true;
-  const packsBefore = (() => { try { const b = JSON.parse(A.baseText); return JSON.stringify([b.packs, b.settings.starting_coins, b.settings.daily_coins]); } catch { return ''; } })();
-  const packsNow = JSON.stringify([A.data.packs, A.data.settings.starting_coins, A.data.settings.daily_coins]);
   try {
     const r = await GH.publish(msg || 'Update site content', (s) => (btn.textContent = s));
     setDirty(false);
     toast(`Saved to GitHub${r.uploaded ? ` (${r.uploaded} file${r.uploaded > 1 ? 's' : ''} uploaded)` : ''} — the live site updates in 1–3 minutes. Watch the status in the sidebar.`, 'ok');
     watchLive(r.rev);
-    if (Gacha.enabled && packsBefore !== packsNow) await syncFirebase(true);
   } catch (e) { toast(e.message, 'err'); }
   btn.disabled = false; btn.textContent = 'Publish to site';
-}
-
-async function syncFirebase(auto) {
-  await Gacha.init();
-  if (!Gacha.state.user || !(await Gacha.isAdmin())) {
-    if (auto) toast('Content published — but pack prices/coin settings couldn\'t be synced to Firebase (admin sign-in required).', 'err');
-    return false;
-  }
-  await Gacha.syncCatalog(A.data.packs, A.data.settings);
-  if (!auto) toast('Packs and coin settings synced to Firebase', 'ok');
-  return true;
 }
 
 function route() {
@@ -566,7 +535,7 @@ function dashboard(main) {
   const drafts = d.news.filter((n) => !n.published).length;
   const tiles = [['members', 'Team members', d.members.length], ['races', 'Races', d.races.length],
     ['news', 'Articles', `${d.news.length}${drafts ? ` <small>(${drafts} draft${drafts > 1 ? 's' : ''})</small>` : ''}`],
-    ['media', 'Photos', d.media.length], ['cards', 'Cards', d.cards.length], ['packs', 'Packs', d.packs.length]];
+    ['media', 'Photos', d.media.length]];
   main.innerHTML = `${head({ title: 'Dashboard' })}
   <div class="dash-tiles">${tiles.map(([k, l, v]) => `<a class="dash-tile" href="#${k}"><b>${v}</b><span>${l}</span></a>`).join('')}</div>
   <div class="dash-cols">
@@ -575,7 +544,6 @@ function dashboard(main) {
       <a class="btn btn-ghost" href="#media">Add photos</a>
       <a class="btn btn-ghost" href="#races">Update race results</a>
       <a class="btn btn-ghost" href="#drivers">Update standings</a>
-      <button class="btn btn-ghost" data-go="cards">Create a card</button>
     </div></div>
     <div class="panel"><h3>How publishing works</h3><ol class="small checklist">
       <li>Make as many edits as you like — they're kept in this browser tab.</li>
@@ -583,7 +551,7 @@ function dashboard(main) {
       <li>GitHub Pages rebuilds the live site in about a minute.</li>
       <li>Every publish is in your repository history, so nothing is ever lost.</li>
     </ol>
-    ${Gacha.enabled ? '' : '<p class="small muted">Packs are switched off until Firebase is added to <code>config.js</code> — see the README.</p>'}</div>
+</div>
   </div>`;
   $$('[data-go]', main).forEach((b) => (b.onclick = () => { location.hash = b.dataset.go; setTimeout(() => openForm(SECTIONS[b.dataset.go], null), 50); }));
 }
@@ -602,7 +570,6 @@ function settingsView(main) {
     ['Background music', [{ k: 'music_file', label: 'Music file (loops on the site; visitors can mute it)', type: 'audio' },
       { k: 'music_volume', label: 'Volume (0–100)', type: 'number', half: true, def: 35 },
       { k: 'music_title', label: 'Track name (shown on hover, optional)', half: true }]],
-    ['Packs economy', [{ k: 'starting_coins', label: 'Coins for new accounts', type: 'number', half: true }, { k: 'daily_coins', label: 'Free coins (claimable every 20 hours)', type: 'number', half: true }]],
   ];
   main.innerHTML = `${head(SECTIONS.settings, '<span class="muted small">Changes apply as you type — press <b>Publish to site</b> when ready.</span>')}
     <form id="sf" class="settings-form">${groups.map(([t, fs]) => `<fieldset class="panel"><legend>${t}</legend><div class="fgrid">${fs.map((f) => fieldHtml(f, s[f.k])).join('')}</div></fieldset>`).join('')}</form>`;
@@ -624,22 +591,10 @@ function listView(main, s) {
   let actions = `<button class="btn btn-primary" id="new">+ New ${s.singular}</button>`;
   if (s.standings) actions = `<button class="btn btn-ghost" id="reorder" title="Re-number positions by points">Auto-rank by points</button>` + actions;
 
-  let body;
-  if (s.cardsView) {
-    const by = (r) => rows.filter((c) => c.rarity === r);
-    body = RARITIES.map((r) => `<h3 class="rar-h"><span class="leg-${r}"><i></i></span>${RARITY_LABEL[r]} <span class="muted small">(${by(r).length})</span></h3>
-      <div class="adm-cards">${by(r).map((c) => {
-        const m = A.data.members.find((x) => x.id === c.member_id);
-        return `<div class="adm-card ${c.active ? '' : 'inactive'}">${renderCard({ ...c, image: src(c.image || m?.photo) }, { color: A.data.settings.primary_color })}
-          <div class="adm-card-actions"><button class="btn btn-sm btn-ghost" data-edit="${esc(c.id)}">Edit</button><button class="btn btn-sm btn-ghost danger" data-del="${esc(c.id)}">Delete</button></div>
-          ${c.active ? '' : '<span class="pill">Inactive</span>'}</div>`;
-      }).join('') || '<p class="muted small">No cards of this rarity yet.</p>'}</div>`).join('');
-  } else {
-    body = rows.length ? `<div class="table-wrap"><table class="adm-table"><thead><tr>${s.cols.map(([k, l]) => `<th class="${l === 'thumb' ? 'th-thumb' : ''}">${l === 'thumb' ? '' : esc(l || k[0].toUpperCase() + k.slice(1))}</th>`).join('')}<th></th></tr></thead>
+  const body = rows.length ? `<div class="table-wrap"><table class="adm-table"><thead><tr>${s.cols.map(([k, l]) => `<th class="${l === 'thumb' ? 'th-thumb' : ''}">${l === 'thumb' ? '' : esc(l || k[0].toUpperCase() + k.slice(1))}</th>`).join('')}<th></th></tr></thead>
       <tbody>${rows.map((r) => `<tr>${s.cols.map(([k, l, t]) => `<td>${cell(r[k], l === 'thumb' ? 'thumb' : t)}</td>`).join('')}
         <td class="row-actions"><button class="btn btn-sm btn-ghost" data-edit="${esc(r.id)}">Edit</button><button class="btn btn-sm btn-ghost danger" data-del="${esc(r.id)}">Delete</button></td></tr>`).join('')}</tbody></table></div>`
       : `<div class="empty panel">Nothing here yet. <button class="btn btn-primary btn-sm" id="new2">Add the first ${s.singular}</button></div>`;
-  }
   main.innerHTML = head(s, actions) + body;
   $('#new').onclick = () => openForm(s, null);
   $('#new2')?.addEventListener('click', () => openForm(s, null));
@@ -648,7 +603,6 @@ function listView(main, s) {
     const list = A.data[s.res], r = list.find((x) => x.id === b.dataset.del);
     if (!confirm(`Delete "${r.name || r.title || r.driver || r.team}"?`)) return;
     list.splice(list.indexOf(r), 1);
-    if (s.res === 'members') A.data.cards.forEach((c) => { if (c.member_id === r.id) delete c.member_id; });
     setDirty(); toast('Deleted — publish to make it live', 'ok'); route();
   }));
   $('#reorder')?.addEventListener('click', () => {
@@ -662,11 +616,6 @@ function cell(v, type) {
   if (type === 'bool') return v ? '<span class="yes">✓</span>' : '<span class="muted">—</span>';
   if (type === 'date') return esc(fmtDate(v));
   if (type === 'status') return `<span class="pill ${v === 'completed' ? '' : 'pill-up'}">${esc(v || 'upcoming')}</span>`;
-  if (type === 'rarity') return v ? esc(RARITY_LABEL[v]) : '<span class="muted">—</span>';
-  if (type === 'odds') {
-    const tot = RARITIES.reduce((a, r) => a + (Number(v?.[r]) || 0), 0) || 1;
-    return `<div class="odds-mini">${RARITIES.map((r) => `<i class="leg-${r}" style="flex:${Number(v?.[r]) || 0}" title="${RARITY_LABEL[r]} ${(((Number(v?.[r]) || 0) / tot) * 100).toFixed(1)}%"></i>`).join('')}</div>`;
-  }
   const s = String(v ?? '');
   return esc(s.length > 60 ? s.slice(0, 60) + '…' : s);
 }
@@ -700,11 +649,6 @@ function fieldHtml(f, v) {
       const st = (v && typeof v === 'object') ? v : {};
       return `<fieldset class="field sub-fs"><legend>${esc(f.label)}</legend><div class="stats-grid">${STAT_FIELDS.map((s) =>
         `<label>${esc(s.label)}<input type="number" step="any" data-stat="${s.key}" value="${esc(st[s.key] ?? '')}"></label>`).join('')}</div></fieldset>`;
-    }
-    case 'odds': {
-      const o = (v && typeof v === 'object') ? v : { common: 70, rare: 22, circuit: 7, signature: 1 };
-      return `<fieldset class="field sub-fs"><legend>${esc(f.label)}</legend><div class="odds-grid">${RARITIES.map((r) =>
-        `<label class="leg-${r}"><span><i></i>${RARITY_LABEL[r]}</span><input type="number" min="0" step="any" data-odds="${r}" value="${esc(o[r] ?? 0)}"><em data-pct="${r}"></em></label>`).join('')}</div></fieldset>`;
     }
     default: return `<label class="${cls}">${lab}<input type="${f.type || 'text'}" id="${id}" name="${f.k}" value="${esc(val)}" ${f.step ? `step="${f.step}"` : ''} ${f.ph ? `placeholder="${esc(f.ph)}"` : ''} ${f.req ? 'required' : ''}></label>`;
   }
@@ -757,12 +701,6 @@ function wireFields(form, onChange) {
     inp.value = '';
   }));
   $$('input[type=color]', form).forEach((c) => (c.oninput = () => (c.nextElementSibling.textContent = c.value)));
-  const odds = $$('[data-odds]', form);
-  if (odds.length) {
-    const upd = () => { const t = odds.reduce((a, i) => a + (Number(i.value) || 0), 0) || 1;
-      odds.forEach((i) => ($(`[data-pct="${i.dataset.odds}"]`, form).textContent = `${(((Number(i.value) || 0) / t) * 100).toFixed(1)}%`)); };
-    odds.forEach((i) => (i.oninput = upd)); upd();
-  }
   if (onChange) form.addEventListener('input', onChange);
 }
 
@@ -770,7 +708,6 @@ function collect(form, fields) {
   const out = {};
   for (const f of fields) {
     if (f.type === 'stats') { out[f.k] = {}; $$('[data-stat]', form).forEach((i) => { if (i.value !== '') out[f.k][i.dataset.stat] = Number(i.value); }); continue; }
-    if (f.type === 'odds') { out[f.k] = {}; $$('[data-odds]', form).forEach((i) => (out[f.k][i.dataset.odds] = Number(i.value) || 0)); continue; }
     const el = form.elements[f.k];
     if (!el) continue;
     if (f.type === 'check') out[f.k] = el.checked;
@@ -788,17 +725,11 @@ function openForm(s, row) {
   const panel = $('#drawerPanel');
   panel.innerHTML = `<form id="ef" novalidate>
     <div class="drawer-head"><h2>${row ? 'Edit' : 'New'} ${esc(s.singular)}</h2><button type="button" class="x" id="dx" aria-label="Close">×</button></div>
-    <div class="drawer-body">${s.cardsView ? '<div class="card-preview" id="cprev"></div>' : ''}<div class="fgrid">${fields.map((f) => fieldHtml(f, row?.[f.k])).join('')}</div></div>
+    <div class="drawer-body"><div class="fgrid">${fields.map((f) => fieldHtml(f, row?.[f.k])).join('')}</div></div>
     <div class="drawer-foot"><span class="grow"></span><button type="button" class="btn btn-ghost" id="dc">Cancel</button><button class="btn btn-primary">Done</button></div>
   </form>`;
   const form = $('#ef');
-  const preview = () => {
-    if (!s.cardsView) return;
-    const v = collect(form, fields.map((f) => ({ ...f, req: false })));
-    const m = A.data.members.find((x) => x.id === v.member_id);
-    $('#cprev').innerHTML = renderCard({ ...v, name: v.name || 'Card name', image: src(v.image || m?.photo || '') }, { color: A.data.settings.primary_color });
-  };
-  wireFields(form, preview); preview();
+  wireFields(form);
   $('#drawer').hidden = false; document.body.classList.add('modal-open');
   setTimeout(() => form.querySelector('input:not([type=hidden]):not([type=file]):not([type=checkbox]),textarea')?.focus(), 50);
   $('#dx').onclick = $('#dc').onclick = closeDrawer;
@@ -815,7 +746,7 @@ function openForm(s, row) {
         if (body.published && !body.published_at) body.published_at = new Date().toISOString().slice(0, 16);
       }
       if (row) {
-        for (const f of fields) if (!(f.k in body) && f.type !== 'stats' && f.type !== 'odds') delete row[f.k];
+        for (const f of fields) if (!(f.k in body) && f.type !== 'stats') delete row[f.k];
         Object.assign(row, body);
       } else A.data[s.res].push({ id: newId(s.idp), ...body });
       setDirty(); closeDrawer(); route();
@@ -872,37 +803,36 @@ function mediaView(main) {
   });
 }
 
-// ================================================================ fans & admins (Firebase)
+// ================================================================ admins (Firebase)
 async function fansView(main) {
-  if (!Gacha.enabled) {
+  if (!Auth.enabled) {
     main.innerHTML = `${head(SECTIONS.fans)}<div class="panel"><h3>Firebase isn't connected yet</h3>
-      <p class="small">Fan accounts, admin logins and card packs need a free Firebase project. Follow <b>Step 4</b> in the README, then paste your Firebase config into <code>config.js</code> in the repository.</p>
-      <p class="small muted">Until then the Packs page shows "coming soon" and everything else works normally.</p></div>`;
+      <p class="small">Admin logins need a free Firebase project. Follow <b>Step 3</b> in the README, then paste your Firebase config into <code>config.js</code>.</p></div>`;
     return;
   }
   main.innerHTML = `${head(SECTIONS.fans)}<div class="loading"><span></span></div>`;
   let users = [], admins = [];
-  try { [users, admins] = await Promise.all([Gacha.listUsers(), Gacha.listAdmins()]); } catch (e) { toast(e.message, 'err'); }
+  try { [users, admins] = await Promise.all([Auth.listUsers(), Auth.listAdmins()]); } catch (e) { toast(e.message, 'err'); }
   const adminSet = new Set(admins);
-  const me = Gacha.state.user.uid;
+  const me = Auth.state.user.uid;
   users.sort((a, b) => (adminSet.has(b.uid) - adminSet.has(a.uid)) || (b.created || 0) - (a.created || 0));
-  main.innerHTML = `${head(SECTIONS.fans, '<button class="btn btn-ghost" id="sync">Re-sync packs & coins</button>')}
+  main.innerHTML = `${head(SECTIONS.fans)}
     <div class="dash-cols fans-top">
-      <div class="panel"><h3>Admin access</h3><p class="small muted">Tick <b>Admin</b> next to anyone who should be able to sign in to this console with their website account. They need to create an account on the site first.</p>
-        <p class="small"><b>${adminSet.size}</b> admin${adminSet.size === 1 ? '' : 's'}.</p></div>
+      <div class="panel"><h3>Adding an admin</h3><ol class="small checklist">
+        <li>They open <b>Admin Console</b> (footer of the site) and choose <b>Create account</b>.</li>
+        <li>Their name appears in the list below — switch on <b>Admin</b>.</li>
+        <li>They reload the console and they're in.</li></ol></div>
       <div class="panel"><h3>GitHub connection</h3><p class="small muted">Publishing goes to <b>${esc(A.gh.owner)}/${esc(A.gh.repo)}</b>. If the token expires, paste a new one here.</p>
         <button class="btn btn-ghost btn-sm" id="newTok">Replace GitHub token</button></div>
     </div>
-    ${users.length ? `<div class="table-wrap"><table class="adm-table"><thead><tr><th>Account</th><th>Admin</th><th>Coins</th><th>Unique cards</th><th>Pulled</th><th>Joined</th><th></th></tr></thead>
+    ${users.length ? `<div class="table-wrap"><table class="adm-table"><thead><tr><th>Name</th><th>Email</th><th>Admin</th><th>Joined</th><th></th></tr></thead>
     <tbody>${users.map((u) => `<tr data-uid="${esc(u.uid)}">
       <td><b>${esc(u.username || '—')}</b>${u.uid === me ? ' <span class="pill">you</span>' : ''}</td>
+      <td class="muted small">${esc(u.email || '')}</td>
       <td><label class="switch sm"><input type="checkbox" class="adm-toggle" ${adminSet.has(u.uid) ? 'checked' : ''} ${u.uid === me ? 'disabled' : ''}><span class="switch-ui"></span></label></td>
-      <td><input type="number" min="0" class="coins-in" value="${Number(u.coins) || 0}"></td>
-      <td>${Object.keys(u.cards || {}).length} / ${A.data.cards.length}</td><td>${Number(u.pulled) || 0}</td>
       <td class="muted small">${u.created ? esc(fmtDate(new Date(u.created).toISOString().slice(0, 10))) : '—'}</td>
-      <td class="row-actions"><button class="btn btn-sm btn-ghost danger" data-del>Reset</button></td></tr>`).join('')}</tbody></table></div>`
-    : '<div class="empty panel">No one has created an account yet.</div>'}`;
-  $('#sync').onclick = async (e) => { e.target.disabled = true; try { await syncFirebase(false); } catch (err) { toast(err.message, 'err'); } e.target.disabled = false; };
+      <td class="row-actions">${u.uid === me ? '' : '<button class="btn btn-sm btn-ghost danger" data-del>Remove</button>'}</td></tr>`).join('')}</tbody></table></div>`
+    : '<div class="empty panel">No accounts yet.</div>'}`;
   $('#newTok').onclick = () => {
     if (A.dirty && !confirm('You have unpublished changes. Replacing the token reloads the console and discards them. Continue?')) return;
     A.dirty = false; A.data = null; githubSetup({ owner: A.gh.owner, repo: A.gh.repo, branch: A.gh.branch });
@@ -912,14 +842,14 @@ async function fansView(main) {
     $('.adm-toggle', tr).onchange = async (e) => {
       const on = e.target.checked;
       if (on && !confirm(`Give ${name} admin access? They'll be able to edit and publish the whole site.`)) { e.target.checked = false; return; }
-      try { await Gacha.setAdmin(uid, on); toast(on ? `${name} is now an admin` : `Removed admin access from ${name}`, 'ok'); }
+      try { await Auth.setAdmin(uid, on); toast(on ? `${name} is now an admin` : `Removed admin access from ${name}`, 'ok'); }
       catch (err) { e.target.checked = !on; toast(err.message, 'err'); }
     };
-    $('.coins-in', tr).onchange = async (e) => { try { await Gacha.setCoins(uid, e.target.value); toast('Coins updated', 'ok'); } catch (err) { toast(err.message, 'err'); } };
-    $('[data-del]', tr).onclick = async () => {
-      if (!confirm('Reset this account? Their coins and card collection are deleted (they can sign in again to start fresh).')) return;
-      try { await Gacha.deleteFan(uid); tr.remove(); toast('Account reset', 'ok'); } catch (err) { toast(err.message, 'err'); }
-    };
+    $('[data-del]', tr)?.addEventListener('click', async () => {
+      if (!confirm(`Remove ${name} from this list? This also removes their admin access. (Their login itself can be deleted in Firebase → Authentication.)`)) return;
+      try { if (adminSet.has(uid)) await Auth.setAdmin(uid, false); await Auth.deleteUser(uid); tr.remove(); toast('Removed', 'ok'); }
+      catch (err) { toast(err.message, 'err'); }
+    });
   });
 }
 

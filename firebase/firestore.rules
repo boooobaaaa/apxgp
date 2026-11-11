@@ -1,35 +1,21 @@
 rules_version = '2';
 
-// Security rules for APX GP card packs.
+// Security rules for the APX GP website.
 // Paste this whole file into Firebase Console → Firestore Database → Rules → Publish.
 //
 // What they enforce:
-//  • New fans start with exactly the configured starting coins and an empty collection.
-//  • Fans can only gain coins through the free-coins claim, at most once every 20 hours.
-//  • Opening a pack must deduct that pack's real price (read from /packs) and add exactly
-//    its number of cards to the "pulled" counter.
-//  • Only admins (listed in /admins) can change prices, coin settings, other fans,
-//    grant admin access, or read the stored GitHub publishing token.
+//  • Anyone can create an account; it only gets a small profile (name, email).
+//  • Only admins (listed in /admins) can see the account list, grant or remove
+//    admin access, or read the stored GitHub publishing token.
+//  • The very first admin is added by hand in the Firebase console.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn() { return request.auth != null; }
     function isAdmin() { return signedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
-    function economy() { return get(/databases/$(database)/documents/config/gacha).data; }
 
-    match /config/{doc} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
-    match /packs/{packId} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
-    // Who is an admin. The FIRST admin is added by hand in the Firebase console;
-    // after that, admins can grant/remove admin access from the admin console.
+    // Who is an admin.
     match /admins/{uid} {
       allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
       allow list, create, update: if isAdmin();
@@ -41,44 +27,22 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    // Account profiles (name + email), so admins can find people to promote.
     match /users/{uid} {
       function owner() { return signedIn() && request.auth.uid == uid; }
-      function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
-      function next() { return request.resource.data; }
-
-      function validNew() {
-        return next().keys().hasOnly(['username', 'coins', 'lastDaily', 'pulled', 'cards', 'created'])
-          && next().username is string && next().username.size() >= 3 && next().username.size() <= 24
-          && next().coins == economy().startingCoins
-          && next().pulled == 0
-          && next().cards is map && next().cards.size() == 0
-          && next().lastDaily == null;
-      }
-
-      function dailyClaim() {
-        return changed().hasOnly(['coins', 'lastDaily'])
-          && next().lastDaily == request.time
-          && (resource.data.lastDaily == null || request.time > resource.data.lastDaily + duration.value(20, 'h'))
-          && next().coins == resource.data.coins + economy().dailyCoins;
-      }
-
-      function packOpen() {
-        let pack = get(/databases/$(database)/documents/packs/$(next().lastPack)).data;
-        return changed().hasOnly(['coins', 'pulled', 'cards', 'lastPack'])
-          && pack.active == true
-          && next().coins == resource.data.coins - pack.cost
-          && next().coins >= 0
-          && next().pulled == resource.data.pulled + pack.size
-          && next().cards is map
-          && next().cards.diff(resource.data.cards).removedKeys().size() == 0
-          && next().cards.diff(resource.data.cards).affectedKeys().size() <= pack.size;
-      }
-
       allow get: if owner() || isAdmin();
       allow list: if isAdmin();
-      allow create: if owner() && validNew();
-      allow update: if isAdmin() || (owner() && (dailyClaim() || packOpen()));
+      allow create: if owner()
+        && request.resource.data.keys().hasOnly(['username', 'email', 'created'])
+        && request.resource.data.username is string
+        && request.resource.data.username.size() >= 1 && request.resource.data.username.size() <= 32;
+      allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['username']);
       allow delete: if isAdmin();
+    }
+
+    // Everything else (including leftovers from the old card packs) is closed.
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

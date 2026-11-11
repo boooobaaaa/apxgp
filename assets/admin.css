@@ -53,8 +53,6 @@ body.admin { background: var(--bg-2); }
 .row-actions .btn { margin-left: 4px; }
 .yes { color: var(--accent-2); font-weight: 900; }
 .btn.danger:hover { background: #4a1414; border-color: #a33; color: #fff; }
-.odds-mini { display: flex; width: 120px; height: 8px; border-radius: 99px; overflow: hidden; background: var(--bg); }
-.odds-mini i { background: var(--rc); }
 
 /* drawer form */
 .drawer { position: fixed; inset: 0; z-index: 100; }
@@ -102,18 +100,6 @@ textarea { resize: vertical; line-height: 1.5; }
 .color-row input { width: 60px; height: 42px; padding: 4px; cursor: pointer; }
 .settings-form fieldset { margin: 0 0 18px; }
 .settings-form legend { font-weight: 900; text-transform: uppercase; font-style: italic; padding: 0 8px; }
-.card-preview { display: flex; justify-content: center; margin-bottom: 22px; padding: 20px; background: radial-gradient(circle, #3a362e, transparent 70%); border-radius: 12px; }
-.card-preview .tcard { width: 190px; }
-
-/* cards admin */
-.rar-h { display: flex; align-items: center; gap: 10px; margin: 28px 0 14px; font-size: 1.2rem; text-transform: uppercase; font-style: italic; font-weight: 900; }
-.rar-h span i { display: block; width: 12px; height: 12px; transform: rotate(45deg); background: var(--rc); box-shadow: 0 0 10px var(--rc); }
-.adm-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 18px; }
-.adm-card { display: flex; flex-direction: column; gap: 8px; align-items: stretch; position: relative; }
-.adm-card .tcard { width: 100%; }
-.adm-card.inactive .tcard { opacity: .4; filter: grayscale(1); }
-.adm-card > .pill { position: absolute; top: 8px; left: 8px; z-index: 5; }
-.adm-card-actions { display: flex; gap: 6px; } .adm-card-actions .btn { flex: 1; padding: 6px; }
 
 /* media admin */
 .upload-zone { border: 2px dashed var(--line); display: flex; flex-wrap: wrap; gap: 16px 30px; align-items: center; justify-content: space-between; padding: 26px; margin-bottom: 24px; transition: border-color .2s, background .2s; }

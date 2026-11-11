@@ -1,7 +1,7 @@
 /* Public website — single-page app with hash routing. */
 'use strict';
 
-const S = { settings: {}, statFields: [], me: null, cleanup: [], data: null, gachaReady: false };
+const S = { settings: {}, statFields: [], cleanup: [], data: null };
 const STAT_FIELDS = [
   { key: 'starts', label: 'Race Starts' }, { key: 'wins', label: 'Wins' }, { key: 'podiums', label: 'Podiums' },
   { key: 'poles', label: 'Pole Positions' }, { key: 'fastest_laps', label: 'Fastest Laps' }, { key: 'points', label: 'Career Points' },
@@ -24,13 +24,7 @@ const DATA = {
   }),
   news: () => (D().news || []).filter((n) => isOn(n.published)).sort((a, b) => String(b.published_at || '').localeCompare(String(a.published_at || ''))),
   media: () => D().media || [],
-  withImage: (c) => ({ ...c, image: c.image || DATA.member(c.member_id)?.photo || '' }),
-  cards: () => (D().cards || []).filter((c) => isOn(c.active)).map(DATA.withImage)
-    .sort((a, b) => RARS.indexOf(a.rarity) - RARS.indexOf(b.rarity)),
-  allCards: () => (D().cards || []).map(DATA.withImage),
-  packs: () => (D().packs || []).filter((p) => isOn(p.active)).sort((a, b) => (Number(a.sort) || 0) - (Number(b.sort) || 0)),
 };
-const RARS = ['common', 'rare', 'circuit', 'signature'];
 const onCleanup = (fn) => S.cleanup.push(fn);
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
@@ -47,16 +41,9 @@ async function boot() {
   renderAccount();
   initSearch();
   initMusic();
-  Gacha.onChange((st) => {
-    const sig = `${st.user ? st.user.uid : ''}|${st.profile ? 1 : 0}|${st.error || ''}`;
-    const changed = sig !== S.authSig; S.authSig = sig;
-    S.me = st.profile;
-    renderAccount();
-    const route = location.hash.replace(/^#\/?/, '').split(/[/?]/)[0];
-    if (['packs', 'collection', 'login'].includes(route) && (changed || !S.gachaReady)) router();
-    S.gachaReady = true;
-  });
-  Gacha.init();
+  // Signed-in admins get an "Admin console" shortcut in the header
+  Auth.onChange(renderAccount);
+  Auth.init();
   $('#burger').addEventListener('click', () => document.body.classList.toggle('menu-open'));
   window.addEventListener('scroll', () => $('#nav').classList.toggle('scrolled', scrollY > 10), { passive: true });
   window.addEventListener('hashchange', router);
@@ -84,38 +71,20 @@ function applyTheme() {
 
 function renderAccount() {
   const el = $('#navAccount'), mob = $('#navMobileAcct');
-  const isAdmin = !!(Gacha.state && Gacha.state.isAdmin);
-  if (!Gacha.enabled) { el.innerHTML = ''; mob.innerHTML = ''; return; }
-  if (!S.me) {
-    el.innerHTML = `<a href="#/login" class="btn btn-sm btn-ghost">Sign in</a>`;
-    mob.innerHTML = `<a href="#/login">Sign in</a>`;
-    return;
-  }
-  el.innerHTML = `
-    ${isAdmin ? '<a href="admin.html" class="btn btn-sm btn-primary admin-btn">Admin console</a>' : ''}
-    <a href="#/packs" class="coin-pill" title="Your coins"><span class="coin"></span><b id="coinCount">${S.me.coins.toLocaleString()}</b></a>
-    <div class="acct-menu">
-      <button class="acct-btn">${esc(S.me.username)} ▾</button>
-      <div class="acct-drop">
-        <a href="#/collection">My collection</a>
-        ${isAdmin ? '<a href="admin.html">Admin console</a>' : ''}
-        <button class="logout-btn">Sign out</button>
-      </div>
-    </div>`;
-  mob.innerHTML = `<a href="#/collection">My collection</a>${isAdmin ? '<a href="admin.html">Admin console</a>' : ''}<a href="#" class="logout-btn">Sign out (${esc(S.me.username)})</a>`;
-  $$('.logout-btn').forEach((b) => (b.onclick = async (e) => { e.preventDefault(); await Gacha.signOut(); toast('Signed out'); }));
+  const isAdmin = !!(Auth.state && Auth.state.user && Auth.state.isAdmin);
+  el.innerHTML = isAdmin ? '<a href="admin.html" class="btn btn-sm btn-primary admin-btn">Admin console</a>' : '';
+  mob.innerHTML = isAdmin ? '<a href="admin.html">Admin console</a>' : '';
 }
-function setCoins(n) { if (S.me) { S.me.coins = n; const c = $('#coinCount'); if (c) c.textContent = n.toLocaleString(); } }
 
 // ------------------------------------------------------------------ router
-const ROUTES = { '': home, home, schedule, team, news, media, compare, packs, collection, login };
+const ROUTES = { '': home, home, schedule, team, news, media, compare };
 async function router() {
   S.cleanup.forEach((fn) => { try { fn(); } catch { /* ignore */ } }); S.cleanup = [];
   document.body.classList.remove('menu-open', 'modal-open');
   const [pathPart, query = ''] = location.hash.replace(/^#\/?/, '').split('?');
   const [name, ...args] = pathPart.split('/').filter(Boolean);
   const params = new URLSearchParams(query);
-  $$('#navLinks a').forEach((a) => a.classList.toggle('active', a.dataset.route === (name || 'home') || (name === 'collection' && a.dataset.route === 'packs')));
+  $$('#navLinks a').forEach((a) => a.classList.toggle('active', a.dataset.route === (name || 'home')));
   const view = ROUTES[name || ''] || notFound;
   app.innerHTML = '<div class="loading"><span></span></div>';
   try { await view(args, params); }
@@ -210,18 +179,6 @@ async function home() {
     <div class="news-grid">${newsList.slice(0, 3).map(newsCard).join('')}</div>
   </section>` : ''}
 
-  <section class="packs-band">
-    <div class="wrap packs-band-inner">
-      <div>
-        <div class="eyebrow">Collect the team</div>
-        <h2>Open Paddock Packs</h2>
-        <p class="lede">Pull team cards across four rarities — from Commons to ultra-rare signed Signature cards. Free coins every day.</p>
-        <a class="btn btn-primary" href="#/packs">Open packs</a>
-      </div>
-      <div class="band-cards" id="bandCards"></div>
-    </div>
-  </section>
-
   ${media.length ? `<section class="wrap section">
     <div class="section-head"><h2>Gallery</h2><a class="link-arrow" href="#/media">All photos</a></div>
     <div class="media-teaser">${media.slice(0, 6).map((m) => `<a href="#/media"><img src="${esc(m.file)}" alt="${esc(m.caption || '')}" loading="lazy"></a>`).join('')}</div>
@@ -231,8 +188,7 @@ async function home() {
 
   if (next) startCountdowns();
   // fan of sample cards in the band
-  const pick = RARS.map((r) => DATA.cards().find((c) => c.rarity === r)).filter(Boolean);
-  const band = $('#bandCards'); if (band) { band.innerHTML = pick.map((c) => renderCard(c, { color: color() })).join(''); enableTilt(band); }
+
 }
 
 function newsCard(n, i, feature) {
@@ -387,7 +343,7 @@ async function team(args) {
 async function profile(members, id) {
   const found = DATA.member(id);
   if (!found) throw new Error('That team member could not be found.');
-  const m = { ...found, cards: DATA.cards().filter((c) => c.member_id === id) };
+  const m = found;
   const i = members.findIndex((x) => x.id === id);
   const prev = members[(i - 1 + members.length) % members.length], nxt = members[(i + 1) % members.length];
   const age = ageFrom(m.birthdate);
@@ -424,11 +380,8 @@ async function profile(members, id) {
     ${hasStats ? `<aside><h2>Career stats</h2><div class="stat-grid">${S.statFields.filter((f) => stats[f.key] !== undefined && stats[f.key] !== '').map((f) =>
       `<div class="stat"><b>${esc(stats[f.key])}</b><span>${esc(f.label)}</span></div>`).join('')}</div></aside>` : ''}
   </section>
-  ${m.cards?.length ? `<section class="wrap section"><div class="section-head"><h2>Collectible cards</h2><a class="link-arrow" href="#/packs">Open packs</a></div>
-    <div class="card-row" id="profCards">${m.cards.map((c) => renderCard(c, { color: color() })).join('')}</div></section>` : ''}
   ${members.length > 1 ? `<section class="wrap profile-pager">
     <a href="#/team/${prev.id}">← ${esc(prev.name)}</a><a href="#/team/${nxt.id}">${esc(nxt.name)} →</a></section>` : ''}`;
-  if ($('#profCards')) enableTilt($('#profCards'));
 }
 
 // ------------------------------------------------------------------ NEWS
@@ -545,201 +498,6 @@ async function compare(_args, params) {
   draw();
 }
 
-// ------------------------------------------------------------------ AUTH (Firebase)
-function authForm(intro = '') {
-  return `<div class="auth-card">
-    ${intro}
-    <div class="tabs auth-tabs"><button class="tab" data-m="login" aria-selected="true">Sign in</button><button class="tab" data-m="register">Create account</button></div>
-    <form id="authForm">
-      <label class="reg-only" hidden>Username<input name="username" autocomplete="nickname" minlength="3" maxlength="24" placeholder="Shown on your collection"></label>
-      <label>Email<input name="email" type="email" autocomplete="email" required></label>
-      <label>Password<input name="password" type="password" autocomplete="current-password" required minlength="6"></label>
-      <button class="btn btn-primary btn-block" type="submit">Sign in</button>
-      ${Gacha.googleEnabled ? '<button class="btn btn-ghost btn-block google-btn" type="button" id="googleBtn">Continue with Google</button>' : ''}
-      <p class="small muted form-note"><button type="button" class="link-btn" id="forgotBtn">Forgot password?</button> · New accounts start with ${esc(S.settings.starting_coins)} coins.</p>
-    </form></div>`;
-}
-function wireAuth() {
-  let mode = 'login';
-  const form = $('#authForm');
-  $$('.auth-tabs .tab').forEach((b) => (b.onclick = () => {
-    mode = b.dataset.m;
-    $$('.auth-tabs .tab').forEach((x) => x.setAttribute('aria-selected', x === b));
-    $('button[type=submit]', form).textContent = mode === 'login' ? 'Sign in' : 'Create account';
-    $('.reg-only', form).hidden = mode === 'login';
-    form.username.required = mode === 'register';
-    form.password.autocomplete = mode === 'login' ? 'current-password' : 'new-password';
-  }));
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    const btn = $('button[type=submit]', form); btn.disabled = true;
-    try {
-      if (mode === 'login') await Gacha.signIn(form.email.value.trim(), form.password.value);
-      else await Gacha.register(form.username.value.trim(), form.email.value.trim(), form.password.value);
-      toast(mode === 'login' ? 'Welcome back!' : 'Welcome aboard!', 'ok');
-      if (location.hash.startsWith('#/login')) location.hash = new URLSearchParams(location.hash.split('?')[1] || '').get('next') || '#/packs';
-    } catch (err) { toast(err.message, 'err'); } finally { btn.disabled = false; }
-  };
-  $('#googleBtn')?.addEventListener('click', async () => { try { await Gacha.google(); } catch (err) { toast(err.message, 'err'); } });
-  $('#forgotBtn').onclick = async () => {
-    const email = form.email.value.trim();
-    if (!email) return toast('Type your email above first', 'err');
-    try { await Gacha.resetPassword(email); toast('Password reset email sent', 'ok'); } catch (err) { toast(err.message, 'err'); }
-  };
-}
-function gachaUnavailable() {
-  return `${pageHead('Collect the team', 'Paddock Packs')}<section class="wrap section"><div class="empty panel">
-    <h2>Packs are coming soon</h2><p>Card packs aren't switched on yet — check back soon!</p></div></section>`;
-}
-async function login() {
-  if (!Gacha.enabled) { app.innerHTML = gachaUnavailable(); return; }
-  if (S.me) { location.hash = '#/packs'; return; }
-  app.innerHTML = `${pageHead('Fan account', 'Sign in')}<section class="wrap section center-col">${authForm()}</section>`;
-  wireAuth();
-}
-
-// ------------------------------------------------------------------ PACKS (gacha)
-const packBrand = () => safeUrl(S.settings.logo)
-  ? `<img class="pack-logo" src="${esc(S.settings.logo)}" alt="">`
-  : `<span class="pack-brand">${esc(S.settings.short_name)}</span>`;
-function fmtWait(ms) { const t = Math.max(1, Math.ceil(ms / 60e3)), h = Math.floor(t / 60), m = t % 60; return h ? `${h}h ${m}m` : `${m}m`; }
-
-async function packs() {
-  if (!Gacha.enabled) { app.innerHTML = gachaUnavailable(); return; }
-  const list = DATA.packs(), cards = DATA.cards();
-  const counts = cards.reduce((a, c) => ((a[c.rarity] = (a[c.rarity] || 0) + 1), a), {});
-  const st = Gacha.state;
-  const wallet = () => {
-    if (!st.ready) return '<div class="wallet"><span class="muted">Loading your account…</span></div>';
-    if (st.user && !S.me) return `<div class="wallet"><span class="muted">${esc(st.error || 'Setting up your account…')}</span></div>`;
-    if (!S.me) return `<div class="center-col">${authForm('<h3 class="center">Sign in to open packs</h3><p class="center muted small">Free account · free coins every day</p>')}</div>`;
-    const can = S.me.canClaimDaily;
-    return `<div class="wallet">
-      <div class="wallet-coins"><span class="coin big"></span><div><b id="walletCoins">${S.me.coins.toLocaleString()}</b><span class="small muted">coins</span></div></div>
-      <button class="btn ${can ? 'btn-primary' : 'btn-ghost'}" id="dailyBtn" ${can ? '' : 'disabled'}>${can ? `Claim ${esc(S.settings.daily_coins)} free coins` : `Free coins again in ${fmtWait(S.me.nextDailyAt - Date.now())}`}</button>
-      <a class="btn btn-ghost" href="#/collection">My collection →</a>
-    </div>`;
-  };
-
-  app.innerHTML = `${pageHead('Collect the team', 'Paddock Packs', 'Open packs to collect team cards. Four rarities, one goal: complete the set.')}
-  <section class="wrap section">
-    ${wallet()}
-    <div class="rarity-legend">${RARS.map((r) => `<div class="leg leg-${r}"><i></i><b>${RARITY_LABEL[r]}</b><span>${counts[r] || 0} cards</span></div>`).join('')}</div>
-    <div class="pack-grid">${list.map((p) => {
-      const total = Object.values(p.odds || {}).reduce((a, b) => a + (Number(b) || 0), 0) || 1;
-      return `<div class="pack-tile">
-        <div class="pack-art pa-${(Number(p.sort) || 0) % 3}"><div class="pack-art-inner">${packBrand()}<span class="pack-name">${esc(p.name)}</span><span class="pack-size">${esc(p.size)} cards</span></div></div>
-        <div class="pack-info">
-          <h3>${esc(p.name)}</h3><p class="muted small">${esc(p.description || '')}</p>
-          <ul class="odds">${RARS.filter((r) => Number(p.odds?.[r]) > 0).map((r) => `<li class="o-${r}"><span>${RARITY_LABEL[r]}</span><b>${((Number(p.odds[r]) / total) * 100).toFixed(1).replace(/\.0$/, '')}%</b></li>`).join('')}</ul>
-          ${p.guaranteed ? `<div class="small guarantee">★ ${RARITY_LABEL[p.guaranteed]} or better guaranteed</div>` : ''}
-          <button class="btn btn-primary btn-block open-btn" data-id="${esc(p.id)}" ${S.me ? '' : 'disabled'}><span class="coin"></span>${esc(p.cost)} — Open</button>
-        </div></div>`;
-    }).join('') || '<div class="empty">No packs available right now.</div>'}</div>
-  </section>`;
-
-  if (!S.me) { if ($('#authForm')) wireAuth(); return; }
-  $('#dailyBtn').onclick = async (e) => {
-    e.target.disabled = true;
-    try { const amount = await Gacha.claimDaily(); toast(`+${amount} coins!`, 'ok'); router(); }
-    catch (err) { toast(err.message, 'err'); e.target.disabled = false; }
-  };
-  $$('.open-btn').forEach((b) => (b.onclick = () => openPackFlow(list.find((p) => p.id === b.dataset.id))));
-}
-
-async function openPackFlow(pack) {
-  if (S.me.coins < pack.cost) return toast(`You need ${pack.cost} coins — claim your free coins or come back later!`, 'err');
-  document.body.classList.add('modal-open');
-  const ov = document.createElement('div');
-  ov.className = 'opening';
-  ov.innerHTML = `<div class="opening-stage"><div class="pack-art big pa-${(Number(pack.sort) || 0) % 3} shaking"><div class="pack-art-inner">${packBrand()}<span class="pack-name">${esc(pack.name)}</span><span class="pack-size">Opening…</span></div></div></div>`;
-  document.body.appendChild(ov);
-  const close = () => { ov.remove(); document.body.classList.remove('modal-open'); window.removeEventListener('keydown', esc_); };
-  const esc_ = (e) => { if (e.key === 'Escape' && ov.dataset.done) close(); };
-  window.addEventListener('keydown', esc_);
-  onCleanup(close);
-
-  let result;
-  try { [result] = await Promise.all([Gacha.openPack(pack, DATA.cards()), new Promise((r) => setTimeout(r, 1100))]); }
-  catch (e) { close(); return toast(e.message, 'err'); }
-  setCoins(result.coins); const wc = $('#walletCoins'); if (wc) wc.textContent = result.coins.toLocaleString();
-
-  $('.pack-art', ov).classList.add('torn');
-  await new Promise((r) => setTimeout(r, 450));
-  const best = Math.max(...result.cards.map((c) => RARS.indexOf(c.rarity)));
-  ov.innerHTML = `<div class="opening-stage">
-    <div class="reveal-row" style="--n:${result.cards.length}">${result.cards.map((c, i) => `
-      <button class="flip r-${esc(c.rarity)}" style="--d:${i * 90}ms" aria-label="Reveal card ${i + 1}">
-        <div class="flip-inner"><div class="flip-back">${safeUrl(S.settings.logo) ? `<img src="${esc(S.settings.logo)}" alt="">` : `<span>${esc(S.settings.short_name)}</span>`}</div><div class="flip-front">${renderCard(c, { color: color(), isNew: c.isNew })}</div></div>
-      </button>`).join('')}</div>
-    <div class="reveal-actions">
-      <button class="btn btn-ghost" id="revealAll">Reveal all</button>
-      <button class="btn btn-ghost" id="againBtn" hidden><span class="coin"></span>${esc(pack.cost)} — Open another</button>
-      <a class="btn btn-ghost" href="#/collection" id="toColl" hidden>View collection</a>
-      <button class="btn btn-primary" id="doneBtn" hidden>Done</button>
-    </div></div>`;
-  enableTilt(ov);
-  const flips = $$('.flip', ov);
-  const check = () => {
-    if (flips.every((f) => f.classList.contains('flipped'))) {
-      ov.dataset.done = '1';
-      $('#revealAll', ov).hidden = true; ['#againBtn', '#toColl', '#doneBtn'].forEach((s) => ($(s, ov).hidden = false));
-      if (best >= 2) ov.classList.add(best === 3 ? 'burst-sig' : 'burst-circ');
-    }
-  };
-  flips.forEach((f) => (f.onclick = () => { f.classList.add('flipped'); check(); }));
-  $('#revealAll', ov).onclick = () => { flips.forEach((f, i) => setTimeout(() => { f.classList.add('flipped'); check(); }, i * 160)); };
-  $('#doneBtn', ov).onclick = () => { close(); if (location.hash.startsWith('#/packs')) router(); };
-  $('#toColl', ov).onclick = close;
-  $('#againBtn', ov).onclick = () => { close(); openPackFlow(pack); };
-}
-
-// ------------------------------------------------------------------ COLLECTION
-async function collection() {
-  if (!Gacha.enabled) { app.innerHTML = gachaUnavailable(); return; }
-  if (!Gacha.state.ready) { app.innerHTML = '<div class="loading"><span></span></div>'; return; } // re-rendered when auth is ready
-  if (!S.me) { location.hash = '#/login?next=' + encodeURIComponent('#/collection'); return; }
-  const mine = S.me.cards || {};
-  const cards = DATA.allCards()
-    .filter((c) => isOn(c.active) || mine[c.id])
-    .map((c) => ({ ...c, owned: mine[c.id] || 0 }))
-    .sort((a, b) => RARS.indexOf(a.rarity) - RARS.indexOf(b.rarity));
-  let filter = 'all';
-  const owned = cards.filter((c) => c.owned);
-  const pct = cards.length ? Math.round((owned.length / cards.length) * 100) : 0;
-
-  app.innerHTML = `${pageHead(`${esc(S.me.username)}'s garage`, 'My Collection')}
-  <section class="wrap section">
-    <div class="coll-summary">
-      <div class="coll-total"><b>${owned.length}<span>/${cards.length}</span></b><span class="muted small">unique cards · ${pct}% complete · ${S.me.pulled} pulled</span>
-        <div class="progress"><i style="width:${pct}%"></i></div></div>
-      ${RARS.map((r) => { const all = cards.filter((c) => c.rarity === r); const o = all.filter((c) => c.owned).length;
-        return `<div class="coll-r leg-${r}"><i></i><b>${o}/${all.length}</b><span>${RARITY_LABEL[r]}</span></div>`; }).join('')}
-    </div>
-    <div class="toolbar"><div class="tabs chips" id="cf">${[['all', 'All'], ['owned', 'Owned'], ...RARS.map((r) => [r, RARITY_LABEL[r]])].map(([k, l]) => `<button class="tab" data-f="${k}">${l}</button>`).join('')}</div>
-      <a class="btn btn-primary btn-sm" href="#/packs">Open packs</a></div>
-    <div class="card-grid" id="cg"></div>
-  </section>
-  <div class="card-zoom" id="zoom" hidden></div>`;
-
-  const draw = () => {
-    const list = cards.filter((c) => filter === 'all' || (filter === 'owned' ? c.owned : c.rarity === filter));
-    $('#cg').innerHTML = list.map((c) => renderCard(c, { locked: !c.owned, count: c.owned, color: color() })).join('') || '<div class="empty">Nothing here yet.</div>';
-    $$('#cf .tab').forEach((b) => b.setAttribute('aria-selected', b.dataset.f === filter));
-  };
-  $('#cf').onclick = (e) => { const b = e.target.closest('.tab'); if (b) { filter = b.dataset.f; draw(); } };
-  draw(); enableTilt($('#cg'));
-
-  const zoom = $('#zoom');
-  $('#cg').onclick = (e) => {
-    const el = e.target.closest('.tcard:not(.locked)'); if (!el) return;
-    const c = cards.find((x) => x.id === el.dataset.card);
-    zoom.innerHTML = `<div class="zoom-inner">${renderCard(c, { color: color() })}<div class="zoom-info"><div class="eyebrow">${RARITY_LABEL[c.rarity]}</div><h2>${esc(c.name)}</h2><p>${esc(c.subtitle || '')}</p>${c.flavor ? `<p class="muted"><em>${esc(c.flavor)}</em></p>` : ''}<p class="small muted">You own ${c.owned}</p>${c.member_id ? `<a class="btn btn-ghost btn-sm" href="#/team/${esc(c.member_id)}">View profile</a>` : ''}</div></div>`;
-    zoom.hidden = false; document.body.classList.add('modal-open'); enableTilt(zoom);
-  };
-  zoom.onclick = (e) => { if (!e.target.closest('a') && !e.target.closest('.tcard')) { zoom.hidden = true; document.body.classList.remove('modal-open'); } };
-}
-
 // ------------------------------------------------------------------ BACKGROUND MUSIC (mute / unmute only)
 const ICON_SOUND = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 const ICON_MUTED = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16 9l6 6M22 9l-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
@@ -782,7 +540,7 @@ function initMusic() {
 }
 
 // ------------------------------------------------------------------ SEARCH (bottom-right button)
-const TYPE_WEIGHT = { Team: 8, Page: 6, News: 5, Race: 4, Standings: 3, Pack: 2, Card: 1, Photo: 1 };
+const TYPE_WEIGHT = { Team: 8, Page: 6, News: 5, Race: 4, Standings: 3, Photo: 1 };
 function buildSearchIndex() {
   const items = [];
   const strip = (t) => String(t || '').replace(/[#>*_`!\[\]()-]/g, ' ');
@@ -790,7 +548,7 @@ function buildSearchIndex() {
     items.push({ type, title: String(title || ''), sub: String(sub || ''), href, thumb, hay: `${title} ${sub} ${extra}`.toLowerCase() });
   [['Home', '#/', 'home page latest'], ['Schedule & Standings', '#/schedule', 'calendar races championship table points'],
     ['Team', '#/team', 'drivers crew staff people'], ['News', '#/news', 'articles updates'], ['Media', '#/media', 'photos gallery pictures'],
-    ['Compare drivers', '#/compare', 'head to head stats'], ['Paddock Packs', '#/packs', 'cards gacha coins open'], ['My collection', '#/collection', 'cards binder']]
+    ['Compare drivers', '#/compare', 'head to head stats']]
     .forEach(([t, h, x]) => add('Page', t, '', h, x));
   DATA.members().forEach((m) => add('Team', m.name, [m.role, m.number ? `#${m.number}` : '', m.nationality].filter(Boolean).join(' · '), `#/team/${encodeURIComponent(m.id)}`, `${m.hometown || ''} ${strip(m.bio)}`, photoOf(m, color())));
   DATA.news().forEach((n) => add('News', n.title, [fmtDate(n.published_at), n.excerpt].filter(Boolean).join(' — '), `#/news/${encodeURIComponent(n.slug)}`, `${n.author || ''} ${strip(n.body)}`, safeUrl(n.cover)));
@@ -798,8 +556,6 @@ function buildSearchIndex() {
   const st = DATA.standings();
   st.drivers.forEach((d) => add('Standings', d.driver, `P${d.pos} · ${d.points} pts${d.team ? ` · ${d.team}` : ''}`, '#/schedule?tab=drivers', 'drivers championship'));
   st.constructors.forEach((c) => add('Standings', c.team, `P${c.pos} · ${c.points} pts · Constructors`, '#/schedule?tab=constructors', 'constructors championship team'));
-  DATA.cards().forEach((c) => add('Card', c.name, [RARITY_LABEL[c.rarity], c.subtitle].filter(Boolean).join(' · '), S.me ? '#/collection' : '#/packs', `${c.circuit || ''} ${c.flavor || ''} ${c.rarity}`));
-  DATA.packs().forEach((p) => add('Pack', p.name, `${p.cost} coins · ${p.size} cards`, '#/packs', p.description || ''));
   DATA.media().forEach((m) => add('Photo', m.caption || 'Photo', m.album || 'Gallery', '#/media', '', safeUrl(m.file)));
   return items;
 }
@@ -814,7 +570,7 @@ function initSearch() {
   panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', 'Search');
   panel.innerHTML = `<div class="search-box">
       <div class="search-input"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.5 15.5L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-        <input type="text" enterkeyhint="search" aria-label="Search" placeholder="Search drivers, news, races, cards…" autocomplete="off" spellcheck="false"><kbd>Esc</kbd></div>
+        <input type="text" enterkeyhint="search" aria-label="Search" placeholder="Search drivers, news, races, photos…" autocomplete="off" spellcheck="false"><kbd>Esc</kbd></div>
       <div class="search-results" role="listbox"></div></div>`;
   document.body.append(fab, panel);
   const input = $('input', panel), out = $('.search-results', panel);
@@ -835,7 +591,7 @@ function initSearch() {
         .map((i) => { const tl = i.title.toLowerCase(); return { i, score: (tl.startsWith(q) ? 3 : 0) + (tl.includes(q) ? 20 : 0) + terms.filter((t) => tl.includes(t)).length * 5 + (TYPE_WEIGHT[i.type] || 0) * 2 }; })
         .sort((a, b) => b.score - a.score).map((x) => x.i);
       // keep the list readable: at most a few of each kind (cards & photos can be numerous)
-      const per = {}, cap = { Card: 4, Photo: 6, Standings: 4 };
+      const per = {}, cap = { Photo: 6, Standings: 4 };
       results = results.filter((r) => (per[r.type] = (per[r.type] || 0) + 1) <= (cap[r.type] || 8)).slice(0, 30);
       // group by type, in order of each group's best match
       const order = [...new Set(results.map((r) => r.type))];
