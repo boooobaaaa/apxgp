@@ -20,12 +20,12 @@ window.SITE_CONFIG = {
   // Leave as null to hide packs until you're ready (the rest of the site works without it).
   firebase: null,
   // firebase: {
-  //   apiKey: '...',
-  //   authDomain: 'your-project.firebaseapp.com',
-  //   projectId: 'your-project',
-  //   storageBucket: 'your-project.appspot.com',
-  //   messagingSenderId: '...',
-  //   appId: '...',
+  //   apiKey: 'AIzaSyAGVh3j-NIXZaOR3v25qFKTBBUVBvUf1oY',
+  //   authDomain: 'apxgpwesbite.firebaseapp.com',
+  //   projectId: 'apxgpwesbite',
+  //   storageBucket: 'apxgpwesbite.firebasestorage.app',
+  //   messagingSenderId: '1082174419943',
+  //   appId: '1:1082174419943:web:e32f1bbef4909b13cd8342',
   // },
 
   // Allow "Continue with Google" sign-in for fans (enable Google in Firebase Authentication first).
