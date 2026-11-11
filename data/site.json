@@ -92,13 +92,14 @@
     },
     {
       "id": "m4",
-      "name": "Sam Okafor",
+      "name": "Seojun Park",
       "role": "Team Principal",
-      "nationality": "Nigeria",
+      "nationality": "Vietnam",
       "is_driver": false,
-      "bio": "Founder and team principal. Sam runs the show from the pit wall.",
-      "sort": 3,
-      "stats": {}
+      "bio": "Founder and team principal.",
+      "sort": 1,
+      "stats": {},
+      "photo": "uploads/2026/mwcko6kg9ssbl.png"
     },
     {
       "id": "m5",
