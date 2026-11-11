@@ -45,6 +45,8 @@ async function boot() {
   } catch (e) { app.innerHTML = `<div class="wrap empty">Couldn't load the site content. ${esc(e.message)}</div>`; return; }
   applyTheme();
   renderAccount();
+  initSearch();
+  initMusic();
   Gacha.onChange((st) => {
     const sig = `${st.user ? st.user.uid : ''}|${st.profile ? 1 : 0}|${st.error || ''}`;
     const changed = sig !== S.authSig; S.authSig = sig;
@@ -77,23 +79,31 @@ function applyTheme() {
   $('#footer').innerHTML = `<div class="wrap footer-inner">
     <div>${logo ? `<img class="footer-logo" src="${esc(logo)}" alt="">` : ''}<div class="footer-brand">${esc(s.team_name)}</div><div class="muted">${esc(s.tagline)}</div></div>
     <div class="footer-links">${socials}</div>
-    <div class="muted small">© ${new Date().getFullYear()} ${esc(s.team_name)}</div></div>`;
+    <div class="muted small footer-meta">© ${new Date().getFullYear()} ${esc(s.team_name)} · <a href="admin.html" class="footer-admin">Team admin</a></div></div>`;
 }
 
 function renderAccount() {
-  const el = $('#navAccount');
-  if (!Gacha.enabled) { el.innerHTML = ''; return; }
-  if (!S.me) { el.innerHTML = `<a href="#/login" class="btn btn-sm btn-ghost">Sign in</a>`; return; }
+  const el = $('#navAccount'), mob = $('#navMobileAcct');
+  const isAdmin = !!(Gacha.state && Gacha.state.isAdmin);
+  if (!Gacha.enabled) { el.innerHTML = ''; mob.innerHTML = ''; return; }
+  if (!S.me) {
+    el.innerHTML = `<a href="#/login" class="btn btn-sm btn-ghost">Sign in</a>`;
+    mob.innerHTML = `<a href="#/login">Sign in</a>`;
+    return;
+  }
   el.innerHTML = `
+    ${isAdmin ? '<a href="admin.html" class="btn btn-sm btn-primary admin-btn">Admin console</a>' : ''}
     <a href="#/packs" class="coin-pill" title="Your coins"><span class="coin"></span><b id="coinCount">${S.me.coins.toLocaleString()}</b></a>
     <div class="acct-menu">
       <button class="acct-btn">${esc(S.me.username)} ▾</button>
       <div class="acct-drop">
         <a href="#/collection">My collection</a>
-        <button id="logoutBtn">Sign out</button>
+        ${isAdmin ? '<a href="admin.html">Admin console</a>' : ''}
+        <button class="logout-btn">Sign out</button>
       </div>
     </div>`;
-  $('#logoutBtn').onclick = async () => { await Gacha.signOut(); toast('Signed out'); };
+  mob.innerHTML = `<a href="#/collection">My collection</a>${isAdmin ? '<a href="admin.html">Admin console</a>' : ''}<a href="#" class="logout-btn">Sign out (${esc(S.me.username)})</a>`;
+  $$('.logout-btn').forEach((b) => (b.onclick = async (e) => { e.preventDefault(); await Gacha.signOut(); toast('Signed out'); }));
 }
 function setCoins(n) { if (S.me) { S.me.coins = n; const c = $('#coinCount'); if (c) c.textContent = n.toLocaleString(); } }
 
@@ -728,6 +738,143 @@ async function collection() {
     zoom.hidden = false; document.body.classList.add('modal-open'); enableTilt(zoom);
   };
   zoom.onclick = (e) => { if (!e.target.closest('a') && !e.target.closest('.tcard')) { zoom.hidden = true; document.body.classList.remove('modal-open'); } };
+}
+
+// ------------------------------------------------------------------ BACKGROUND MUSIC (mute / unmute only)
+const ICON_SOUND = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+const ICON_MUTED = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16 9l6 6M22 9l-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+function initMusic() {
+  const file = safeUrl(S.settings.music_file);
+  if (!file) return;
+  const audio = new Audio(file);
+  audio.loop = true; audio.preload = 'auto';
+  audio.volume = Math.min(1, Math.max(0, (Number(S.settings.music_volume ?? 35) || 0) / 100));
+  let muted = store.get('musicMuted', false), started = false;
+  audio.muted = muted;
+
+  const btn = document.createElement('button');
+  btn.className = 'fab music-fab';
+  btn.innerHTML = `<span class="fab-icon"></span><span class="eq"><i></i><i></i><i></i></span>`;
+  document.body.appendChild(btn);
+  const render = () => {
+    btn.classList.toggle('muted', muted);
+    btn.classList.toggle('waiting', !started && !muted);
+    $('.fab-icon', btn).innerHTML = muted ? ICON_MUTED : ICON_SOUND;
+    const label = muted ? 'Unmute music' : 'Mute music';
+    btn.setAttribute('aria-label', label);
+    btn.title = `${label}${S.settings.music_title ? ` — ♪ ${S.settings.music_title}` : ''}${!started && !muted ? ' (starts when you interact with the page)' : ''}`;
+  };
+  // Browsers block sound until the visitor interacts with the page, so the track starts
+  // on the first click / key / tap. After that the button only mutes and unmutes.
+  const start = () => {
+    if (started) return;
+    audio.play().then(() => { started = true; render(); unhook(); }).catch(() => { /* still blocked */ });
+  };
+  const kick = (e) => { if (e.target.closest && e.target.closest('.music-fab')) return; start(); };
+  const evs = ['pointerdown', 'keydown', 'touchstart'];
+  const unhook = () => evs.forEach((ev) => window.removeEventListener(ev, kick, true));
+  evs.forEach((ev) => window.addEventListener(ev, kick, { capture: true, passive: true }));
+  btn.onclick = () => {
+    muted = !muted; audio.muted = muted; store.set('musicMuted', muted);
+    start(); render();
+  };
+  render(); start();
+}
+
+// ------------------------------------------------------------------ SEARCH (bottom-right button)
+const TYPE_WEIGHT = { Team: 8, Page: 6, News: 5, Race: 4, Standings: 3, Pack: 2, Card: 1, Photo: 1 };
+function buildSearchIndex() {
+  const items = [];
+  const strip = (t) => String(t || '').replace(/[#>*_`!\[\]()-]/g, ' ');
+  const add = (type, title, sub, href, extra = '', thumb = '') =>
+    items.push({ type, title: String(title || ''), sub: String(sub || ''), href, thumb, hay: `${title} ${sub} ${extra}`.toLowerCase() });
+  [['Home', '#/', 'home page latest'], ['Schedule & Standings', '#/schedule', 'calendar races championship table points'],
+    ['Team', '#/team', 'drivers crew staff people'], ['News', '#/news', 'articles updates'], ['Media', '#/media', 'photos gallery pictures'],
+    ['Compare drivers', '#/compare', 'head to head stats'], ['Paddock Packs', '#/packs', 'cards gacha coins open'], ['My collection', '#/collection', 'cards binder']]
+    .forEach(([t, h, x]) => add('Page', t, '', h, x));
+  DATA.members().forEach((m) => add('Team', m.name, [m.role, m.number ? `#${m.number}` : '', m.nationality].filter(Boolean).join(' · '), `#/team/${encodeURIComponent(m.id)}`, `${m.hometown || ''} ${strip(m.bio)}`, photoOf(m, color())));
+  DATA.news().forEach((n) => add('News', n.title, [fmtDate(n.published_at), n.excerpt].filter(Boolean).join(' — '), `#/news/${encodeURIComponent(n.slug)}`, `${n.author || ''} ${strip(n.body)}`, safeUrl(n.cover)));
+  DATA.races().forEach((r) => add('Race', r.name, [r.round ? `Round ${r.round}` : '', r.circuit, fmtDate(r.date), r.result].filter(Boolean).join(' · '), '#/schedule', `${r.country || ''} ${r.status || ''}`));
+  const st = DATA.standings();
+  st.drivers.forEach((d) => add('Standings', d.driver, `P${d.pos} · ${d.points} pts${d.team ? ` · ${d.team}` : ''}`, '#/schedule?tab=drivers', 'drivers championship'));
+  st.constructors.forEach((c) => add('Standings', c.team, `P${c.pos} · ${c.points} pts · Constructors`, '#/schedule?tab=constructors', 'constructors championship team'));
+  DATA.cards().forEach((c) => add('Card', c.name, [RARITY_LABEL[c.rarity], c.subtitle].filter(Boolean).join(' · '), S.me ? '#/collection' : '#/packs', `${c.circuit || ''} ${c.flavor || ''} ${c.rarity}`));
+  DATA.packs().forEach((p) => add('Pack', p.name, `${p.cost} coins · ${p.size} cards`, '#/packs', p.description || ''));
+  DATA.media().forEach((m) => add('Photo', m.caption || 'Photo', m.album || 'Gallery', '#/media', '', safeUrl(m.file)));
+  return items;
+}
+function initSearch() {
+  const fab = document.createElement('button');
+  fab.className = 'fab search-fab';
+  fab.setAttribute('aria-label', 'Search the site');
+  fab.title = 'Search (Ctrl+K)';
+  fab.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M15.5 15.5L21 21" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
+  const panel = document.createElement('div');
+  panel.className = 'search-panel'; panel.hidden = true;
+  panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', 'Search');
+  panel.innerHTML = `<div class="search-box">
+      <div class="search-input"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.5 15.5L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        <input type="text" enterkeyhint="search" aria-label="Search" placeholder="Search drivers, news, races, cards…" autocomplete="off" spellcheck="false"><kbd>Esc</kbd></div>
+      <div class="search-results" role="listbox"></div></div>`;
+  document.body.append(fab, panel);
+  const input = $('input', panel), out = $('.search-results', panel);
+  let index = null, sel = 0, results = [];
+
+  const hl = (text, terms) => {
+    let h = esc(text);
+    terms.forEach((t) => { const e = esc(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); if (e) h = h.replace(new RegExp(`(${e})`, 'ig'), '<mark>$1</mark>'); });
+    return h;
+  };
+  const run = () => {
+    const q = input.value.trim().toLowerCase();
+    const terms = q.split(/\s+/).filter(Boolean);
+    if (!terms.length) {
+      results = index.filter((i) => i.type === 'Page');
+    } else {
+      results = index.filter((i) => terms.every((t) => i.hay.includes(t)))
+        .map((i) => { const tl = i.title.toLowerCase(); return { i, score: (tl.startsWith(q) ? 3 : 0) + (tl.includes(q) ? 20 : 0) + terms.filter((t) => tl.includes(t)).length * 5 + (TYPE_WEIGHT[i.type] || 0) * 2 }; })
+        .sort((a, b) => b.score - a.score).map((x) => x.i);
+      // keep the list readable: at most a few of each kind (cards & photos can be numerous)
+      const per = {}, cap = { Card: 4, Photo: 6, Standings: 4 };
+      results = results.filter((r) => (per[r.type] = (per[r.type] || 0) + 1) <= (cap[r.type] || 8)).slice(0, 30);
+      // group by type, in order of each group's best match
+      const order = [...new Set(results.map((r) => r.type))];
+      results.sort((a, b) => order.indexOf(a.type) - order.indexOf(b.type));
+    }
+    sel = 0;
+    if (!results.length) { out.innerHTML = `<div class="search-empty">No results for “${esc(input.value.trim())}”</div>`; return; }
+    let last = '';
+    out.innerHTML = results.map((r, n) => {
+      const group = r.type !== last ? `<div class="search-group">${terms.length ? r.type : 'Jump to'}</div>` : ''; last = r.type;
+      return `${group}<a class="search-item" href="${esc(r.href)}" data-n="${n}" role="option">
+        ${r.thumb ? `<span class="search-thumb" style="background-image:url('${esc(r.thumb)}')"></span>` : `<span class="search-thumb type-${r.type.toLowerCase()}">${esc(r.type[0])}</span>`}
+        <span class="search-text"><b>${hl(r.title, terms)}</b>${r.sub ? `<small>${hl(r.sub, terms)}</small>` : ''}</span><span class="search-type">${esc(r.type)}</span></a>`;
+    }).join('');
+    mark();
+  };
+  const mark = () => $$('.search-item', out).forEach((a) => { const on = Number(a.dataset.n) === sel; a.classList.toggle('on', on); if (on) a.scrollIntoView({ block: 'nearest' }); });
+  const open = () => {
+    if (!S.data) return;
+    index = buildSearchIndex();
+    panel.hidden = false; fab.classList.add('active'); document.body.classList.add('search-open');
+    input.value = ''; run(); setTimeout(() => input.focus(), 30);
+  };
+  const close = () => { panel.hidden = true; fab.classList.remove('active'); document.body.classList.remove('search-open'); };
+  fab.onclick = () => (panel.hidden ? open() : close());
+  input.oninput = run;
+  input.onkeydown = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(sel + 1, results.length - 1); mark(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(sel - 1, 0); mark(); }
+    else if (e.key === 'Enter' && results[sel]) { e.preventDefault(); location.hash = results[sel].href; close(); }
+  };
+  out.onclick = (e) => { if (e.target.closest('.search-item')) close(); };
+  panel.onclick = (e) => { if (e.target === panel) close(); };
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !panel.hidden) close();
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
+    if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') || (e.key === '/' && !typing)) { e.preventDefault(); panel.hidden ? open() : input.focus(); }
+  });
+  window.addEventListener('hashchange', close);
 }
 
 boot();

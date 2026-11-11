@@ -8,7 +8,8 @@ rules_version = '2';
 //  • Fans can only gain coins through the free-coins claim, at most once every 20 hours.
 //  • Opening a pack must deduct that pack's real price (read from /packs) and add exactly
 //    its number of cards to the "pulled" counter.
-//  • Only admins (listed in /admins) can change prices, coin settings or other fans.
+//  • Only admins (listed in /admins) can change prices, coin settings, other fans,
+//    grant admin access, or read the stored GitHub publishing token.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -27,9 +28,17 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Who is an admin. The FIRST admin is added by hand in the Firebase console;
+    // after that, admins can grant/remove admin access from the admin console.
     match /admins/{uid} {
-      allow get: if signedIn() && request.auth.uid == uid;
-      allow list, write: if false; // add admins by hand in the Firebase console
+      allow get: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow list, create, update: if isAdmin();
+      allow delete: if isAdmin() && request.auth.uid != uid; // you can't remove yourself
+    }
+
+    // The GitHub token the admin console uses to publish. Admins only.
+    match /secrets/{doc} {
+      allow read, write: if isAdmin();
     }
 
     match /users/{uid} {

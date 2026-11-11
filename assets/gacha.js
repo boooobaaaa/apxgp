@@ -13,7 +13,7 @@
 
   let A = null, F = null, auth = null, db = null; // auth module, firestore module, instances
   const listeners = [];
-  const state = { ready: false, user: null, profile: null, error: null };
+  const state = { ready: false, user: null, profile: null, error: null, isAdmin: false };
   let pendingUsername = null;
   let initPromise = null;
 
@@ -51,6 +51,7 @@
         auth = A.getAuth(app); db = F.getFirestore(app);
         A.onAuthStateChanged(auth, async (u) => {
           state.user = u;
+          state.isAdmin = u ? await checkAdmin(u.uid) : false;
           try { state.profile = u ? await loadProfile(u) : null; state.error = null; }
           catch (e) { state.profile = null; state.error = niceError(e).message; console.error(e); }
           state.ready = true; emit();
@@ -200,9 +201,29 @@
   }
 
   // ---------------------------------------------------------------- admin helpers
+  async function checkAdmin(uid) {
+    try { return (await F.getDoc(F.doc(db, 'admins', uid))).exists(); } catch { return false; }
+  }
   async function isAdmin() {
     if (!state.user) return false;
-    try { return (await F.getDoc(F.doc(db, 'admins', state.user.uid))).exists(); } catch { return false; }
+    state.isAdmin = await checkAdmin(state.user.uid);
+    return state.isAdmin;
+  }
+  function whenReady() {
+    return new Promise((resolve) => {
+      if (state.ready) return resolve(state);
+      const fn = (st) => { if (st.ready) { listeners.splice(listeners.indexOf(fn), 1); resolve(st); } };
+      listeners.push(fn);
+    });
+  }
+  // GitHub connection shared by all admins (readable by admins only — see firestore.rules)
+  async function getGithub() { const s = await F.getDoc(F.doc(db, 'secrets', 'github')); return s.exists() ? s.data() : null; }
+  async function setGithub(data) { await F.setDoc(F.doc(db, 'secrets', 'github'), { ...data, updated: F.serverTimestamp(), updatedBy: state.user.uid }); }
+  async function listAdmins() { return (await F.getDocs(F.collection(db, 'admins'))).docs.map((d) => d.id); }
+  async function setAdmin(uid, on) {
+    const ref = F.doc(db, 'admins', uid);
+    if (on) await F.setDoc(ref, { note: 'granted in admin console', grantedBy: state.user.uid, at: F.serverTimestamp() });
+    else await F.deleteDoc(ref);
   }
   /** Mirror pack prices/sizes and the coin economy into Firestore so the rules can enforce them. */
   async function syncCatalog(packs, settings) {
@@ -231,8 +252,9 @@
     googleEnabled: !!CFG.googleSignIn,
     get state() { return state; },
     onChange(fn) { listeners.push(fn); if (state.ready) fn(state); },
-    init, register, signIn, google, resetPassword, signOut, refresh,
+    init, whenReady, register, signIn, google, resetPassword, signOut, refresh,
     claimDaily, openPack, isAdmin, syncCatalog, listUsers, setCoins, deleteFan,
+    getGithub, setGithub, listAdmins, setAdmin,
     DAILY_COOLDOWN_MS,
   };
 })();

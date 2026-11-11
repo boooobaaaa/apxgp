@@ -145,3 +145,7 @@ body.has-pubbar .adm-main { padding-bottom: 120px; }
 .fb-login form { max-width: 380px; }
 code { background: var(--bg); padding: 1px 6px; border-radius: 4px; font-size: .9em; }
 .adm-user b { word-break: break-all; }
+.fans-top { margin-bottom: 20px; }
+.back-link { margin-top: 16px; }
+.auth-card h2 .pill { vertical-align: middle; margin-left: 6px; }
+.audio-field audio { width: 100%; margin-top: 8px; }

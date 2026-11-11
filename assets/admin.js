@@ -164,6 +164,17 @@ async function addImage(file) {
   return path;
 }
 
+async function addAudio(file) {
+  const ok = /^audio\/(mpeg|mp3|mp4|x-m4a|aac|ogg|wav|x-wav|webm)$/.test(file.type) || /\.(mp3|m4a|aac|ogg|oga|wav|webm)$/i.test(file.name);
+  if (!ok) throw new Error(`"${file.name}" isn't a supported audio file (MP3, M4A, OGG, WAV)`);
+  if (file.size > 20 * 1024 * 1024) throw new Error('That file is over 20 MB — please use a shorter or more compressed MP3 (128–192 kbps works well).');
+  const ext = (file.name.match(/\.([a-z0-9]+)$/i) || [, 'mp3'])[1].toLowerCase();
+  const path = `uploads/audio/${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}.${ext}`;
+  A.pending.set(path, file);
+  A.previews.set(path, URL.createObjectURL(file));
+  return path;
+}
+
 // ================================================================ sections
 const SECTIONS = {
   dashboard: { title: 'Dashboard', icon: '◧' },
@@ -261,60 +272,141 @@ const SECTIONS = {
       { k: 'active', label: 'Available in the shop', type: 'check', def: true },
     ],
   },
-  fans: { title: 'Fans & Firebase', icon: '👥', help: 'Fan accounts, coins and pack prices live in Firebase.' },
+  fans: { title: 'Fans & admins', icon: '👥', help: 'Fan accounts, coins, admin access and pack prices live in Firebase.' },
 };
 
 // ================================================================ boot / login
+// Two modes:
+//  • Firebase configured (normal): admins sign in with their website account. The console
+//    checks /admins in Firestore, then uses the GitHub token stored once in /secrets/github.
+//  • No Firebase yet: fall back to pasting a GitHub token directly.
+const authShell = (inner) => `<div class="admin-auth"><div class="auth-card wide">
+  <div class="brand"><img src="brand/apx-gp-logo.png" alt="" class="adm-logo"><span>Admin</span></div>${inner}
+  <p class="small center back-link"><a class="muted" href="./">← Back to site</a></p></div></div>`;
+const loadingScreen = (msg = '') => { root.innerHTML = `<div class="admin-auth"><div class="center-col"><div class="loading"><span></span></div><p class="muted small">${esc(msg)}</p></div></div>`; };
+
+const TOKEN_HELP = `<details class="help small"><summary>How do I get a token?</summary><ol>
+  <li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → Settings → Fine-grained tokens → Generate new token</a>.</li>
+  <li>Name it e.g. "APX GP website" and pick the longest expiration you're comfortable with.</li>
+  <li><b>Repository access</b> → <i>Only select repositories</i> → choose this site's repository.</li>
+  <li><b>Permissions</b> → Repository permissions → <b>Contents: Read and write</b>.</li>
+  <li>Generate, copy it and paste it here.</li></ol></details>`;
+
 function boot() {
+  if (Gacha.enabled) return firebaseBoot();
   const det = GH.detect();
   const token = store.get('apx_gh_token');
-  if (token && det.owner && det.repo) { A.gh = { ...det, token }; return connect(true); }
-  loginScreen(det);
+  if (token && det.owner && det.repo) { A.gh = { ...det, token }; return connect((err) => tokenScreen(det, err)); }
+  tokenScreen(det);
 }
 
-function loginScreen(det, error = '') {
-  const s = { short_name: 'APX GP', logo: 'brand/apx-gp-logo.png' };
-  root.innerHTML = `<div class="admin-auth"><form class="auth-card wide" id="f">
-    <div class="brand"><img src="${esc(s.logo)}" alt="" class="adm-logo"><span>Admin</span></div>
-    <h2>Connect to GitHub</h2>
-    <p class="muted small">The admin console saves your changes straight to the GitHub repository that hosts this site.</p>
+let bootUid = null;
+async function firebaseBoot() {
+  loadingScreen('Checking your account…');
+  await Gacha.init();
+  const st = await Gacha.whenReady();
+  bootUid = st.user ? st.user.uid : null;
+  // re-run whenever the signed-in account changes (sign in / sign out)
+  if (!firebaseBoot.watching) {
+    firebaseBoot.watching = true;
+    Gacha.onChange((s) => { const id = s.user ? s.user.uid : null; if (id !== bootUid && !A.data) firebaseBoot(); });
+  }
+  if (!st.user) return adminSignIn();
+  if (!(await Gacha.isAdmin())) return notAdminScreen(st.user);
+  let gh = null;
+  try { gh = await Gacha.getGithub(); } catch (e) { console.error(e); }
+  const det = GH.detect();
+  if (!gh || !gh.token) return githubSetup(det);
+  A.gh = { owner: gh.owner || det.owner, repo: gh.repo || det.repo, branch: gh.branch || det.branch, token: gh.token };
+  connect((err) => githubSetup({ owner: A.gh.owner, repo: A.gh.repo, branch: A.gh.branch }, err));
+}
+
+function adminSignIn(error = '') {
+  root.innerHTML = authShell(`<h2>Admin sign in</h2>
+    <p class="muted small">Sign in with your APX GP website account. Only accounts that have been given admin access can open the console.</p>
     ${error ? `<div class="alert">${esc(error)}</div>` : ''}
-    <div class="fgrid">
-      <label class="field half">GitHub username / org<input name="owner" required value="${esc(det.owner)}"></label>
-      <label class="field half">Repository name<input name="repo" required value="${esc(det.repo)}"></label>
-    </div>
+    <form id="f"><label>Email<input name="email" type="email" required autocomplete="email"></label>
+    <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+    <button class="btn btn-primary btn-block">Sign in</button>
+    ${Gacha.googleEnabled ? '<button type="button" class="btn btn-ghost btn-block google-btn" id="g">Continue with Google</button>' : ''}</form>
+    <p class="small muted">No account yet? Create one on the site's <a class="link-btn" href="./#/login">sign-in page</a>, then ask an admin to give you access.</p>`);
+  $('#f').onsubmit = async (e) => {
+    e.preventDefault();
+    const b = $('#f button.btn-primary'); b.disabled = true; b.textContent = 'Signing in…';
+    try { await Gacha.signIn(e.target.email.value.trim(), e.target.password.value); }
+    catch (err) { adminSignIn(err.message); }
+  };
+  $('#g')?.addEventListener('click', async () => { try { await Gacha.google(); } catch (err) { adminSignIn(err.message); } });
+}
+
+function notAdminScreen(user) {
+  root.innerHTML = authShell(`<h2>No admin access</h2>
+    <p class="small">You're signed in as <b>${esc(user.email || user.uid)}</b>, but this account hasn't been given admin access.</p>
+    <p class="small muted">Ask an existing admin to open <b>Fans &amp; admins</b> in the console and tick "Admin" next to your name.</p>
+    <details class="help small"><summary>Setting up the very first admin?</summary>
+      <p>In the Firebase console → <b>Firestore Database</b> → <b>Start collection</b> <code>admins</code> → Document ID:</p>
+      <div class="uid-box"><code id="uid">${esc(user.uid)}</code><button class="btn btn-sm btn-ghost" id="cpy" type="button">Copy</button></div>
+      <p>Add a field <code>note</code> = <code>owner</code>, save, then reload this page.</p></details>
+    <button class="btn btn-ghost btn-block" id="so">Sign in with a different account</button>`);
+  $('#cpy').onclick = () => navigator.clipboard?.writeText(user.uid).then(() => toast('Copied', 'ok'));
+  $('#so').onclick = () => Gacha.signOut();
+}
+
+function githubSetup(det, error = '') {
+  root.innerHTML = authShell(`<h2>Connect GitHub <span class="pill">one-time</span></h2>
+    <p class="muted small">The console publishes your changes to the GitHub repository that hosts the site. Paste a token once — it's stored securely in Firebase (only admins can read it), so you and other admins won't be asked again.</p>
+    ${error ? `<div class="alert">${esc(error)}</div>` : ''}
+    <form id="f"><div class="fgrid">
+      <label class="field half">GitHub username / org<input name="owner" required value="${esc(det.owner || '')}"></label>
+      <label class="field half">Repository name<input name="repo" required value="${esc(det.repo || '')}"></label></div>
     <label>Access token<input name="token" type="password" required autocomplete="off" placeholder="github_pat_…"></label>
-    <label class="field check"><input type="checkbox" name="remember" checked> Remember on this device</label>
-    <button class="btn btn-primary btn-block">Connect</button>
-    <details class="help small"><summary>How do I get a token?</summary><ol>
-      <li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → Settings → Fine-grained tokens → Generate new token</a>.</li>
-      <li>Name it e.g. "APX GP admin" and pick an expiration.</li>
-      <li><b>Repository access</b> → <i>Only select repositories</i> → choose this site's repository.</li>
-      <li><b>Permissions</b> → Repository permissions → <b>Contents: Read and write</b>.</li>
-      <li>Generate, copy it and paste it here. Keep it private — anyone with it can edit the site.</li>
-    </ol></details>
-    <p class="small center"><a class="muted" href="./">← Back to site</a></p>
-  </form></div>`;
+    <button class="btn btn-primary btn-block">Connect &amp; save</button></form>
+    ${TOKEN_HELP}
+    <button class="link-btn small" id="so" type="button">Sign out</button>`);
+  $('#so').onclick = () => Gacha.signOut();
   $('#f').onsubmit = async (e) => {
     e.preventDefault();
     const f = e.target;
-    A.gh = { owner: f.owner.value.trim(), repo: f.repo.value.trim(), branch: det.branch, token: f.token.value.trim() };
-    store.set('apx_gh_owner', A.gh.owner, true); store.set('apx_gh_repo', A.gh.repo, true);
-    store.del('apx_gh_token'); store.set('apx_gh_token', A.gh.token, f.remember.checked);
-    connect(false);
+    A.gh = { owner: f.owner.value.trim(), repo: f.repo.value.trim(), branch: det.branch || '', token: f.token.value.trim() };
+    loadingScreen('Connecting to GitHub…');
+    try {
+      await GH.connect();
+      await Gacha.setGithub({ owner: A.gh.owner, repo: A.gh.repo, token: A.gh.token });
+      await GH.load();
+      shell();
+      toast('GitHub connected — saved for all admins', 'ok');
+    } catch (err) { githubSetup(A.gh, err.message); }
   };
 }
 
-async function connect(silent) {
-  root.innerHTML = '<div class="admin-auth"><div class="loading"><span></span></div></div>';
+function tokenScreen(det, error = '') {
+  root.innerHTML = authShell(`<h2>Connect to GitHub</h2>
+    <p class="muted small">Firebase isn't set up yet, so the console needs a GitHub token directly. Once Firebase is added (README Step 4) you'll sign in with your website account instead.</p>
+    ${error ? `<div class="alert">${esc(error)}</div>` : ''}
+    <form id="f"><div class="fgrid">
+      <label class="field half">GitHub username / org<input name="owner" required value="${esc(det.owner || '')}"></label>
+      <label class="field half">Repository name<input name="repo" required value="${esc(det.repo || '')}"></label></div>
+    <label>Access token<input name="token" type="password" required autocomplete="off" placeholder="github_pat_…"></label>
+    <label class="field check"><input type="checkbox" name="remember" checked> Remember on this device</label>
+    <button class="btn btn-primary btn-block">Connect</button></form>
+    ${TOKEN_HELP}`);
+  $('#f').onsubmit = (e) => {
+    e.preventDefault();
+    const f = e.target;
+    A.gh = { owner: f.owner.value.trim(), repo: f.repo.value.trim(), branch: det.branch || '', token: f.token.value.trim() };
+    store.set('apx_gh_owner', A.gh.owner, true); store.set('apx_gh_repo', A.gh.repo, true);
+    store.del('apx_gh_token'); store.set('apx_gh_token', A.gh.token, f.remember.checked);
+    connect((err) => tokenScreen(A.gh, err));
+  };
+}
+
+async function connect(onFail) {
+  loadingScreen('Loading site content…');
   try {
     await GH.connect();
     await GH.load();
     shell();
-  } catch (e) {
-    if (silent && /token/i.test(e.message)) store.del('apx_gh_token');
-    loginScreen(A.gh || GH.detect(), e.message);
-  }
+  } catch (e) { onFail(e.message); }
 }
 
 function applyTheme() {
@@ -334,8 +426,8 @@ function shell() {
     <aside class="adm-side">
       <a class="brand" href="${esc(site)}" target="_blank" title="View site">${brandHtml()}</a>
       <nav id="side">${Object.entries(SECTIONS).map(([k, s]) => `<a href="#${k}" data-s="${k}"><i>${s.icon}</i>${s.title}</a>`).join('')}</nav>
-      <div class="adm-user"><span class="muted small">Connected to</span><b>${esc(A.gh.owner)}/${esc(A.gh.repo)}</b>
-        <div class="adm-user-actions"><a class="btn btn-sm btn-ghost" href="${esc(site)}" target="_blank">View site ↗</a><button class="btn btn-sm btn-ghost" id="out">Disconnect</button></div></div>
+      <div class="adm-user"><span class="muted small">${Gacha.enabled ? 'Signed in as' : 'Connected to'}</span><b>${esc(Gacha.enabled ? (Gacha.state.profile?.username || Gacha.state.user?.email || '') : `${A.gh.owner}/${A.gh.repo}`)}</b>
+        <div class="adm-user-actions"><a class="btn btn-sm btn-ghost" href="${esc(site)}" target="_blank">View site ↗</a><button class="btn btn-sm btn-ghost" id="out">Sign out</button></div></div>
     </aside>
     <main class="adm-main" id="main"></main>
     <div class="publish-bar" id="pubBar" hidden>
@@ -346,7 +438,12 @@ function shell() {
     </div>
     <div class="drawer" id="drawer" hidden><div class="drawer-bg"></div><div class="drawer-panel" id="drawerPanel"></div></div>
   </div>`;
-  $('#out').onclick = () => { if (A.dirty && !confirm('Discard unpublished changes and disconnect?')) return; store.del('apx_gh_token'); A.dirty = false; location.reload(); };
+  $('#out').onclick = async () => {
+    if (A.dirty && !confirm('Discard unpublished changes and sign out?')) return;
+    A.dirty = false;
+    if (Gacha.enabled) await Gacha.signOut(); else store.del('apx_gh_token');
+    location.reload();
+  };
   $('#publish').onclick = publish;
   $('#discard').onclick = () => {
     if (!confirm('Throw away all unpublished changes?')) return;
@@ -378,7 +475,7 @@ async function publish() {
 async function syncFirebase(auto) {
   await Gacha.init();
   if (!Gacha.state.user || !(await Gacha.isAdmin())) {
-    if (auto) toast('Content published — but pack prices/coin settings changed and aren\'t synced to Firebase. Open "Fans & Firebase" and sign in as admin to sync.', 'err');
+    if (auto) toast('Content published — but pack prices/coin settings couldn\'t be synced to Firebase (admin sign-in required).', 'err');
     return false;
   }
   await Gacha.syncCatalog(A.data.packs, A.data.settings);
@@ -443,6 +540,9 @@ function settingsView(main) {
     ['Images', [{ k: 'logo', label: 'Logo (white/transparent works best)', type: 'image' }, { k: 'hero_image', label: 'Home page hero image', type: 'image' }]],
     ['About', [{ k: 'about', label: 'About the team (home page)', type: 'markdown', rows: 6 }]],
     ['Social links', [{ k: 'instagram', label: 'Instagram URL', half: true }, { k: 'twitter', label: 'X / Twitter URL', half: true }, { k: 'youtube', label: 'YouTube URL', half: true }, { k: 'twitch', label: 'Twitch URL', half: true }]],
+    ['Background music', [{ k: 'music_file', label: 'Music file (loops on the site; visitors can mute it)', type: 'audio' },
+      { k: 'music_volume', label: 'Volume (0–100)', type: 'number', half: true, def: 35 },
+      { k: 'music_title', label: 'Track name (shown on hover, optional)', half: true }]],
     ['Packs economy', [{ k: 'starting_coins', label: 'Coins for new accounts', type: 'number', half: true }, { k: 'daily_coins', label: 'Free coins (claimable every 20 hours)', type: 'number', half: true }]],
   ];
   main.innerHTML = `${head(SECTIONS.settings, '<button class="btn btn-primary" id="saveSettings">Apply changes</button>')}
@@ -533,6 +633,11 @@ function fieldHtml(f, v) {
         <div class="img-ctrls"><label class="btn btn-sm btn-ghost">Choose image<input type="file" accept="image/*" hidden></label>
           <button type="button" class="btn btn-sm btn-ghost danger" data-clear ${val ? '' : 'hidden'}>Remove</button>
           <input type="text" name="${f.k}" value="${esc(val)}" placeholder="…or paste an image URL"></div></div></div>`;
+    case 'audio': return `<div class="${cls} audio-field img-field-like"><span class="flabel">${lab}</span>
+        <div class="img-ctrls"><label class="btn btn-sm btn-ghost">Choose audio file<input type="file" accept="audio/*,.mp3,.m4a,.ogg,.wav" hidden></label>
+          <button type="button" class="btn btn-sm btn-ghost danger" data-clear ${val ? '' : 'hidden'}>Remove music</button>
+          <input type="text" name="${f.k}" value="${esc(val)}" placeholder="No music — choose a file" readonly></div>
+        <audio controls preload="none" ${val ? `src="${esc(src(val))}"` : 'hidden'}></audio></div>`;
     case 'stats': {
       const st = (v && typeof v === 'object') ? v : {};
       return `<fieldset class="field sub-fs"><legend>${esc(f.label)}</legend><div class="stats-grid">${STAT_FIELDS.map((s) =>
@@ -563,6 +668,16 @@ function wireFields(form, onChange) {
     };
     clear.onclick = () => set('');
     input.oninput = () => set(input.value.trim());
+  });
+  $$('.audio-field', form).forEach((w) => {
+    const input = $('input[type=text]', w), player = $('audio', w), clear = $('[data-clear]', w);
+    const set = (path) => { input.value = path; player.hidden = !path; if (path) player.src = src(path); else player.removeAttribute('src'); clear.hidden = !path; onChange?.(); };
+    $('input[type=file]', w).onchange = async (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      try { set(await addAudio(file)); toast('Music added — press Apply, then Publish', 'ok'); } catch (err) { toast(err.message, 'err'); }
+      e.target.value = '';
+    };
+    clear.onclick = () => set('');
   });
   $$('[data-preview]', form).forEach((b) => (b.onclick = () => {
     const ta = $('#' + b.dataset.preview, form), pv = $('#' + b.dataset.preview + '_pv', form);
@@ -699,58 +814,53 @@ function mediaView(main) {
   });
 }
 
-// ================================================================ fans (Firebase)
+// ================================================================ fans & admins (Firebase)
 async function fansView(main) {
   if (!Gacha.enabled) {
     main.innerHTML = `${head(SECTIONS.fans)}<div class="panel"><h3>Firebase isn't connected yet</h3>
-      <p class="small">Card packs and fan accounts need a free Firebase project. Follow <b>Step 4</b> in the README, then paste your Firebase config into <code>config.js</code> in the repository.</p>
+      <p class="small">Fan accounts, admin logins and card packs need a free Firebase project. Follow <b>Step 4</b> in the README, then paste your Firebase config into <code>config.js</code> in the repository.</p>
       <p class="small muted">Until then the Packs page shows "coming soon" and everything else works normally.</p></div>`;
     return;
   }
   main.innerHTML = `${head(SECTIONS.fans)}<div class="loading"><span></span></div>`;
-  await Gacha.init();
-  const st = Gacha.state;
-  if (!st.user) {
-    main.innerHTML = `${head(SECTIONS.fans)}<div class="panel fb-login"><h3>Sign in to Firebase</h3>
-      <p class="small muted">Use the fan account you created on the site's Packs page, then mark it as admin (README Step 5).</p>
-      <form id="fbf"><label>Email<input name="email" type="email" required></label><label>Password<input name="password" type="password" required></label>
-      <button class="btn btn-primary">Sign in</button> ${Gacha.googleEnabled ? '<button type="button" class="btn btn-ghost" id="fbg">Continue with Google</button>' : ''}</form></div>`;
-    $('#fbf').onsubmit = async (e) => { e.preventDefault(); try { await Gacha.signIn(e.target.email.value, e.target.password.value); route(); } catch (err) { toast(err.message, 'err'); } };
-    $('#fbg')?.addEventListener('click', async () => { try { await Gacha.google(); route(); } catch (err) { toast(err.message, 'err'); } });
-    return;
-  }
-  const admin = await Gacha.isAdmin();
-  if (!admin) {
-    main.innerHTML = `${head(SECTIONS.fans)}<div class="panel"><h3>This account isn't a Firebase admin yet</h3>
-      <p class="small">Signed in as <b>${esc(st.user.email || st.user.uid)}</b>. To make it an admin, open the Firebase console → <b>Firestore Database</b> → <b>Start collection</b> called <code>admins</code>, and add a document whose <b>Document ID</b> is:</p>
-      <div class="uid-box"><code id="uid">${esc(st.user.uid)}</code><button class="btn btn-sm btn-ghost" id="cpy">Copy</button></div>
-      <p class="small muted">(Leave the document's fields empty or add any field like <code>note: "owner"</code>.) Then reload this page.</p>
-      <button class="btn btn-ghost btn-sm" id="fbout">Sign out of Firebase</button></div>`;
-    $('#cpy').onclick = () => navigator.clipboard?.writeText(st.user.uid).then(() => toast('Copied', 'ok'));
-    $('#fbout').onclick = async () => { await Gacha.signOut(); route(); };
-    return;
-  }
-  let users = [];
-  try { users = await Gacha.listUsers(); } catch (e) { toast(e.message, 'err'); }
-  users.sort((a, b) => (b.created || 0) - (a.created || 0));
-  main.innerHTML = `${head(SECTIONS.fans, '<button class="btn btn-primary" id="sync">Sync packs & coin settings</button>')}
-    <p class="small muted">Signed in to Firebase as <b>${esc(st.user.email || st.user.uid)}</b> (admin). Pack prices & coin settings sync automatically when you publish changes to them; use the button if you ever need to re-sync. <button class="link-btn" id="fbout">Sign out</button></p>
-    ${users.length ? `<div class="table-wrap"><table class="adm-table"><thead><tr><th>Fan</th><th>Coins</th><th>Unique cards</th><th>Pulled</th><th>Joined</th><th></th></tr></thead>
+  let users = [], admins = [];
+  try { [users, admins] = await Promise.all([Gacha.listUsers(), Gacha.listAdmins()]); } catch (e) { toast(e.message, 'err'); }
+  const adminSet = new Set(admins);
+  const me = Gacha.state.user.uid;
+  users.sort((a, b) => (adminSet.has(b.uid) - adminSet.has(a.uid)) || (b.created || 0) - (a.created || 0));
+  main.innerHTML = `${head(SECTIONS.fans, '<button class="btn btn-ghost" id="sync">Re-sync packs & coins</button>')}
+    <div class="dash-cols fans-top">
+      <div class="panel"><h3>Admin access</h3><p class="small muted">Tick <b>Admin</b> next to anyone who should be able to sign in to this console with their website account. They need to create an account on the site first.</p>
+        <p class="small"><b>${adminSet.size}</b> admin${adminSet.size === 1 ? '' : 's'}.</p></div>
+      <div class="panel"><h3>GitHub connection</h3><p class="small muted">Publishing goes to <b>${esc(A.gh.owner)}/${esc(A.gh.repo)}</b>. If the token expires, paste a new one here.</p>
+        <button class="btn btn-ghost btn-sm" id="newTok">Replace GitHub token</button></div>
+    </div>
+    ${users.length ? `<div class="table-wrap"><table class="adm-table"><thead><tr><th>Account</th><th>Admin</th><th>Coins</th><th>Unique cards</th><th>Pulled</th><th>Joined</th><th></th></tr></thead>
     <tbody>${users.map((u) => `<tr data-uid="${esc(u.uid)}">
-      <td><b>${esc(u.username || '—')}</b></td>
+      <td><b>${esc(u.username || '—')}</b>${u.uid === me ? ' <span class="pill">you</span>' : ''}</td>
+      <td><label class="switch sm"><input type="checkbox" class="adm-toggle" ${adminSet.has(u.uid) ? 'checked' : ''} ${u.uid === me ? 'disabled' : ''}><span class="switch-ui"></span></label></td>
       <td><input type="number" min="0" class="coins-in" value="${Number(u.coins) || 0}"></td>
       <td>${Object.keys(u.cards || {}).length} / ${A.data.cards.length}</td><td>${Number(u.pulled) || 0}</td>
       <td class="muted small">${u.created ? esc(fmtDate(new Date(u.created).toISOString().slice(0, 10))) : '—'}</td>
       <td class="row-actions"><button class="btn btn-sm btn-ghost danger" data-del>Reset</button></td></tr>`).join('')}</tbody></table></div>`
-    : '<div class="empty panel">No fans have signed up yet.</div>'}`;
+    : '<div class="empty panel">No one has created an account yet.</div>'}`;
   $('#sync').onclick = async (e) => { e.target.disabled = true; try { await syncFirebase(false); } catch (err) { toast(err.message, 'err'); } e.target.disabled = false; };
-  $('#fbout').onclick = async () => { await Gacha.signOut(); route(); };
+  $('#newTok').onclick = () => {
+    if (A.dirty && !confirm('You have unpublished changes. Replacing the token reloads the console and discards them. Continue?')) return;
+    A.dirty = false; A.data = null; githubSetup({ owner: A.gh.owner, repo: A.gh.repo, branch: A.gh.branch });
+  };
   $$('tr[data-uid]', main).forEach((tr) => {
-    const uid = tr.dataset.uid;
+    const uid = tr.dataset.uid, name = $('b', tr).textContent;
+    $('.adm-toggle', tr).onchange = async (e) => {
+      const on = e.target.checked;
+      if (on && !confirm(`Give ${name} admin access? They'll be able to edit and publish the whole site.`)) { e.target.checked = false; return; }
+      try { await Gacha.setAdmin(uid, on); toast(on ? `${name} is now an admin` : `Removed admin access from ${name}`, 'ok'); }
+      catch (err) { e.target.checked = !on; toast(err.message, 'err'); }
+    };
     $('.coins-in', tr).onchange = async (e) => { try { await Gacha.setCoins(uid, e.target.value); toast('Coins updated', 'ok'); } catch (err) { toast(err.message, 'err'); } };
     $('[data-del]', tr).onclick = async () => {
-      if (!confirm('Reset this fan? Their coins and card collection are deleted (they can sign in again to start fresh).')) return;
-      try { await Gacha.deleteFan(uid); tr.remove(); toast('Fan reset', 'ok'); } catch (err) { toast(err.message, 'err'); }
+      if (!confirm('Reset this account? Their coins and card collection are deleted (they can sign in again to start fresh).')) return;
+      try { await Gacha.deleteFan(uid); tr.remove(); toast('Account reset', 'ok'); } catch (err) { toast(err.message, 'err'); }
     };
   });
 }
