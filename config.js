@@ -29,7 +29,7 @@ window.SITE_CONFIG = {
   // },
 
   // Allow "Continue with Google" sign-in for fans (enable Google in Firebase Authentication first).
-  googleSignIn: false,
+  googleSignIn: true,
 
   firebaseVersion: '12.15.0',
 };
