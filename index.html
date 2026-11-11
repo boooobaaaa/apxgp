@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>APX GP</title>
+  <link rel="icon" type="image/png" href="brand/favicon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Titillium+Web:ital,wght@0,400;0,600;0,700;0,900;1,700;1,900&family=Caveat:wght@700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+  <header class="nav" id="nav">
+    <div class="nav-inner">
+      <a href="#/" class="brand" id="brand"></a>
+      <nav class="nav-links" id="navLinks">
+        <a href="#/" data-route="home">Home</a>
+        <a href="#/schedule" data-route="schedule">Schedule &amp; Standings</a>
+        <a href="#/team" data-route="team">Team</a>
+        <a href="#/news" data-route="news">News</a>
+        <a href="#/media" data-route="media">Media</a>
+        <a href="#/compare" data-route="compare">Compare</a>
+        <a href="#/packs" data-route="packs" class="nav-packs">Packs</a>
+      </nav>
+      <div class="nav-account" id="navAccount"></div>
+      <button class="burger" id="burger" aria-label="Menu"><span></span><span></span><span></span></button>
+    </div>
+  </header>
+  <main id="app" tabindex="-1"></main>
+  <footer class="footer" id="footer"></footer>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="config.js"></script>
+  <script src="assets/common.js"></script>
+  <script src="assets/gacha.js"></script>
+  <script src="assets/app.js"></script>
+</body>
+</html>

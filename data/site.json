@@ -1,0 +1,602 @@
+{
+  "settings": {
+    "team_name": "Expensify Apex Grand Prix Mercedes",
+    "short_name": "APX GP",
+    "tagline": "Built to race. Driven to win.",
+    "season": "2026",
+    "primary_color": "#857452",
+    "secondary_color": "#c9b98f",
+    "background_color": "#222222",
+    "logo": "brand/apx-gp-logo.png",
+    "hero_image": "",
+    "about": "Welcome to the official home of our team. Change all of this from the admin console.",
+    "instagram": "",
+    "twitter": "",
+    "youtube": "",
+    "twitch": "",
+    "starting_coins": 500,
+    "daily_coins": 100
+  },
+  "members": [
+    {
+      "id": "m1",
+      "name": "Alex Mercer",
+      "role": "Race Driver",
+      "number": "17",
+      "nationality": "United Kingdom",
+      "is_driver": true,
+      "bio": "Alex joined the team after a championship-winning junior career, known for late braking and relentless tyre management.\n\nOff track, Alex is a keen sim racer and spends race weekends obsessing over onboard footage.",
+      "birthdate": "2001-04-12",
+      "hometown": "Silverstone, UK",
+      "sort": 0,
+      "stats": {
+        "starts": 48,
+        "wins": 6,
+        "podiums": 17,
+        "poles": 5,
+        "fastest_laps": 8,
+        "points": 812,
+        "championships": 1,
+        "best_finish": 1,
+        "avg_finish": 5.4,
+        "dnfs": 4
+      }
+    },
+    {
+      "id": "m2",
+      "name": "Mateo Ruiz",
+      "role": "Race Driver",
+      "number": "28",
+      "nationality": "Spain",
+      "is_driver": true,
+      "bio": "Mateo is the team's qualifying specialist — a one-lap phenom who has stunned the paddock with his raw pace.\n\nHe brings an infectious energy to the garage and a famously big collection of race helmets.",
+      "birthdate": "2003-09-03",
+      "hometown": "Valencia, Spain",
+      "sort": 1,
+      "stats": {
+        "starts": 36,
+        "wins": 3,
+        "podiums": 11,
+        "poles": 7,
+        "fastest_laps": 5,
+        "points": 544,
+        "championships": 0,
+        "best_finish": 1,
+        "avg_finish": 6.8,
+        "dnfs": 6
+      }
+    },
+    {
+      "id": "m3",
+      "name": "Kai Tanaka",
+      "role": "Reserve Driver",
+      "number": "41",
+      "nationality": "Japan",
+      "is_driver": true,
+      "bio": "Our reserve and development driver, Kai spends most weekends in the simulator helping dial in the car setup.",
+      "birthdate": "2005-01-22",
+      "hometown": "Suzuka, Japan",
+      "sort": 2,
+      "stats": {
+        "starts": 8,
+        "wins": 0,
+        "podiums": 1,
+        "poles": 0,
+        "fastest_laps": 1,
+        "points": 46,
+        "championships": 0,
+        "best_finish": 3,
+        "avg_finish": 9.6,
+        "dnfs": 1
+      }
+    },
+    {
+      "id": "m4",
+      "name": "Sam Okafor",
+      "role": "Team Principal",
+      "nationality": "Nigeria",
+      "is_driver": false,
+      "bio": "Founder and team principal. Sam runs the show from the pit wall.",
+      "sort": 3,
+      "stats": {}
+    },
+    {
+      "id": "m5",
+      "name": "Jordan Blake",
+      "role": "Race Engineer",
+      "nationality": "United States",
+      "is_driver": false,
+      "bio": "The calm voice on the radio, translating data into lap time.",
+      "sort": 4,
+      "stats": {}
+    },
+    {
+      "id": "m6",
+      "name": "Priya Shah",
+      "role": "Head of Strategy",
+      "nationality": "India",
+      "is_driver": false,
+      "bio": "Undercuts, overcuts and safety-car gambles — Priya calls them all.",
+      "sort": 5,
+      "stats": {}
+    }
+  ],
+  "races": [
+    {
+      "id": "r1",
+      "round": 1,
+      "name": "Italian Grand Prix",
+      "circuit": "Monza",
+      "country": "Italy",
+      "date": "2026-09-06",
+      "time": "14:00",
+      "status": "completed",
+      "result": "P2 Mercer · P5 Ruiz"
+    },
+    {
+      "id": "r2",
+      "round": 2,
+      "name": "Azerbaijan Grand Prix",
+      "circuit": "Baku City Circuit",
+      "country": "Azerbaijan",
+      "date": "2026-09-20",
+      "time": "14:00",
+      "status": "completed",
+      "result": "P1 Ruiz · P7 Mercer"
+    },
+    {
+      "id": "r3",
+      "round": 3,
+      "name": "Singapore Grand Prix",
+      "circuit": "Marina Bay",
+      "country": "Singapore",
+      "date": "2026-10-04",
+      "time": "14:00",
+      "status": "completed",
+      "result": "P3 Mercer · DNF Ruiz"
+    },
+    {
+      "id": "r4",
+      "round": 4,
+      "name": "United States Grand Prix",
+      "circuit": "Circuit of the Americas",
+      "country": "United States",
+      "date": "2026-10-18",
+      "time": "14:00",
+      "status": "completed",
+      "result": "P1 Mercer · P4 Ruiz"
+    },
+    {
+      "id": "r5",
+      "round": 5,
+      "name": "Mexico City Grand Prix",
+      "circuit": "Autódromo Hermanos Rodríguez",
+      "country": "Mexico",
+      "date": "2026-11-01",
+      "time": "14:00",
+      "status": "completed",
+      "result": "P4 Ruiz · P6 Mercer"
+    },
+    {
+      "id": "r6",
+      "round": 6,
+      "name": "São Paulo Grand Prix",
+      "circuit": "Interlagos",
+      "country": "Brazil",
+      "date": "2026-11-15",
+      "time": "14:00",
+      "status": "upcoming"
+    },
+    {
+      "id": "r7",
+      "round": 7,
+      "name": "Las Vegas Grand Prix",
+      "circuit": "Las Vegas Strip Circuit",
+      "country": "United States",
+      "date": "2026-11-28",
+      "time": "14:00",
+      "status": "upcoming"
+    },
+    {
+      "id": "r8",
+      "round": 8,
+      "name": "Qatar Grand Prix",
+      "circuit": "Lusail International Circuit",
+      "country": "Qatar",
+      "date": "2026-12-06",
+      "time": "14:00",
+      "status": "upcoming"
+    },
+    {
+      "id": "r9",
+      "round": 9,
+      "name": "Abu Dhabi Grand Prix",
+      "circuit": "Yas Marina",
+      "country": "United Arab Emirates",
+      "date": "2026-12-13",
+      "time": "14:00",
+      "status": "upcoming"
+    }
+  ],
+  "drivers": [
+    {
+      "id": "d1",
+      "pos": 1,
+      "driver": "L. Fontaine",
+      "team": "Vertex Motorsport",
+      "points": 168,
+      "is_ours": false
+    },
+    {
+      "id": "d2",
+      "pos": 2,
+      "driver": "Alex Mercer",
+      "team": "APX GP",
+      "points": 151,
+      "is_ours": true
+    },
+    {
+      "id": "d3",
+      "pos": 3,
+      "driver": "R. Lindqvist",
+      "team": "Ironclad GP",
+      "points": 139,
+      "is_ours": false
+    },
+    {
+      "id": "d4",
+      "pos": 4,
+      "driver": "Mateo Ruiz",
+      "team": "APX GP",
+      "points": 118,
+      "is_ours": true
+    },
+    {
+      "id": "d5",
+      "pos": 5,
+      "driver": "D. Kowalski",
+      "team": "Vertex Motorsport",
+      "points": 104,
+      "is_ours": false
+    },
+    {
+      "id": "d6",
+      "pos": 6,
+      "driver": "T. Haddad",
+      "team": "Solstice F1",
+      "points": 92,
+      "is_ours": false
+    },
+    {
+      "id": "d7",
+      "pos": 7,
+      "driver": "E. Moreau",
+      "team": "Ironclad GP",
+      "points": 77,
+      "is_ours": false
+    },
+    {
+      "id": "d8",
+      "pos": 8,
+      "driver": "J. Park",
+      "team": "Kestrel Racing",
+      "points": 54,
+      "is_ours": false
+    },
+    {
+      "id": "d9",
+      "pos": 9,
+      "driver": "N. Costa",
+      "team": "Solstice F1",
+      "points": 41,
+      "is_ours": false
+    },
+    {
+      "id": "d10",
+      "pos": 10,
+      "driver": "O. Brandt",
+      "team": "Apex Dynamics",
+      "points": 22,
+      "is_ours": false
+    }
+  ],
+  "constructors": [
+    {
+      "id": "t1",
+      "pos": 1,
+      "team": "Vertex Motorsport",
+      "points": 272,
+      "is_ours": false
+    },
+    {
+      "id": "t2",
+      "pos": 2,
+      "team": "APX GP",
+      "points": 269,
+      "is_ours": true
+    },
+    {
+      "id": "t3",
+      "pos": 3,
+      "team": "Ironclad GP",
+      "points": 216,
+      "is_ours": false
+    },
+    {
+      "id": "t4",
+      "pos": 4,
+      "team": "Solstice F1",
+      "points": 133,
+      "is_ours": false
+    },
+    {
+      "id": "t5",
+      "pos": 5,
+      "team": "Kestrel Racing",
+      "points": 54,
+      "is_ours": false
+    },
+    {
+      "id": "t6",
+      "pos": 6,
+      "team": "Apex Dynamics",
+      "points": 22,
+      "is_ours": false
+    }
+  ],
+  "news": [
+    {
+      "id": "n1",
+      "title": "Mercer storms to victory in Austin",
+      "slug": "mercer-storms-to-victory-in-austin",
+      "excerpt": "A masterclass in tyre management delivered our first win of the autumn swing.",
+      "body": "## Lights out and away\n\nAlex Mercer started from P3 and made a brilliant move into Turn 1, then managed the gap for 56 laps.\n\n**Mateo Ruiz** brought it home in P4 to secure a big haul of constructors' points.\n\n> \"The car was on rails today. Huge thanks to everyone back at the factory.\" — Alex",
+      "author": "Team Media",
+      "published": true,
+      "published_at": "2026-10-19T10:00"
+    },
+    {
+      "id": "n2",
+      "title": "Ruiz takes maiden win under the lights in Baku",
+      "slug": "ruiz-takes-maiden-win-under-the-lights-in-baku",
+      "excerpt": "A perfectly-timed safety car call handed Mateo the lead — and he never looked back.",
+      "body": "Mateo Ruiz is a Grand Prix winner! Strategy chief Priya Shah's call to stay out under the safety car proved decisive.\n\n- Pole to flag in the final stint\n- Fastest lap bonus point\n- First win for car #28",
+      "author": "Team Media",
+      "published": true,
+      "published_at": "2026-09-21T09:00"
+    },
+    {
+      "id": "n3",
+      "title": "Team cards are here — open your first pack",
+      "slug": "team-cards-are-here-open-your-first-pack",
+      "excerpt": "Collect commons, chase circuit specials and hunt the ultra-rare signed cards.",
+      "body": "Our new **Paddock Packs** are live! Create a free account, claim your daily coins, and start building your collection.\n\nRarities:\n\n- Common\n- Rare\n- Circuit Special\n- Signature (autographed)",
+      "author": "Team Media",
+      "published": true,
+      "published_at": "2026-11-02T12:00"
+    }
+  ],
+  "media": [],
+  "cards": [
+    {
+      "id": "c1",
+      "name": "Alex Mercer",
+      "subtitle": "Race Driver",
+      "rarity": "common",
+      "member_id": "m1",
+      "number": "17",
+      "active": true
+    },
+    {
+      "id": "c2",
+      "name": "Mateo Ruiz",
+      "subtitle": "Race Driver",
+      "rarity": "common",
+      "member_id": "m2",
+      "number": "28",
+      "active": true
+    },
+    {
+      "id": "c3",
+      "name": "Kai Tanaka",
+      "subtitle": "Reserve Driver",
+      "rarity": "common",
+      "member_id": "m3",
+      "number": "41",
+      "active": true
+    },
+    {
+      "id": "c4",
+      "name": "Sam Okafor",
+      "subtitle": "Team Principal",
+      "rarity": "common",
+      "member_id": "m4",
+      "active": true
+    },
+    {
+      "id": "c5",
+      "name": "Jordan Blake",
+      "subtitle": "Race Engineer",
+      "rarity": "common",
+      "member_id": "m5",
+      "active": true
+    },
+    {
+      "id": "c6",
+      "name": "Priya Shah",
+      "subtitle": "Head of Strategy",
+      "rarity": "common",
+      "member_id": "m6",
+      "active": true
+    },
+    {
+      "id": "c7",
+      "name": "Pit Crew",
+      "subtitle": "Sub-2-second stops",
+      "rarity": "common",
+      "flavor": "Fastest hands in the pit lane.",
+      "active": true
+    },
+    {
+      "id": "c8",
+      "name": "The Garage",
+      "subtitle": "Race weekend HQ",
+      "rarity": "common",
+      "active": true
+    },
+    {
+      "id": "c9",
+      "name": "Alex Mercer",
+      "subtitle": "Race Day",
+      "rarity": "rare",
+      "member_id": "m1",
+      "number": "17",
+      "active": true
+    },
+    {
+      "id": "c10",
+      "name": "Mateo Ruiz",
+      "subtitle": "Race Day",
+      "rarity": "rare",
+      "member_id": "m2",
+      "number": "28",
+      "active": true
+    },
+    {
+      "id": "c11",
+      "name": "Kai Tanaka",
+      "subtitle": "Simulator Session",
+      "rarity": "rare",
+      "member_id": "m3",
+      "number": "41",
+      "active": true
+    },
+    {
+      "id": "c12",
+      "name": "Victory Celebration",
+      "subtitle": "Austin 2026",
+      "rarity": "rare",
+      "flavor": "Champagne tastes better on Sunday.",
+      "active": true
+    },
+    {
+      "id": "c13",
+      "name": "Alex Mercer",
+      "subtitle": "Monza Special",
+      "rarity": "circuit",
+      "member_id": "m1",
+      "circuit": "Monza",
+      "number": "17",
+      "active": true
+    },
+    {
+      "id": "c14",
+      "name": "Mateo Ruiz",
+      "subtitle": "Baku Special",
+      "rarity": "circuit",
+      "member_id": "m2",
+      "circuit": "Baku",
+      "number": "28",
+      "active": true
+    },
+    {
+      "id": "c15",
+      "name": "Alex Mercer",
+      "subtitle": "Singapore Special",
+      "rarity": "circuit",
+      "member_id": "m1",
+      "circuit": "Singapore",
+      "number": "17",
+      "active": true
+    },
+    {
+      "id": "c16",
+      "name": "Alex Mercer",
+      "subtitle": "Austin Special",
+      "rarity": "circuit",
+      "member_id": "m1",
+      "circuit": "Austin",
+      "number": "17",
+      "active": true
+    },
+    {
+      "id": "c17",
+      "name": "Mateo Ruiz",
+      "subtitle": "Interlagos Special",
+      "rarity": "circuit",
+      "member_id": "m2",
+      "circuit": "Interlagos",
+      "number": "28",
+      "active": true
+    },
+    {
+      "id": "c18",
+      "name": "Alex Mercer",
+      "subtitle": "Signed Edition",
+      "rarity": "signature",
+      "member_id": "m1",
+      "number": "17",
+      "flavor": "Hand-signed. Extremely rare.",
+      "active": true
+    },
+    {
+      "id": "c19",
+      "name": "Mateo Ruiz",
+      "subtitle": "Signed Edition",
+      "rarity": "signature",
+      "member_id": "m2",
+      "number": "28",
+      "flavor": "Hand-signed. Extremely rare.",
+      "active": true
+    }
+  ],
+  "packs": [
+    {
+      "id": "p1",
+      "name": "Paddock Pack",
+      "description": "Three cards. Perfect for starting your collection.",
+      "cost": 100,
+      "size": 3,
+      "odds": {
+        "common": 72,
+        "rare": 22,
+        "circuit": 5,
+        "signature": 1
+      },
+      "active": true,
+      "sort": 0
+    },
+    {
+      "id": "p2",
+      "name": "Grand Prix Pack",
+      "description": "Five cards with at least one Rare guaranteed.",
+      "cost": 250,
+      "size": 5,
+      "odds": {
+        "common": 55,
+        "rare": 30,
+        "circuit": 12,
+        "signature": 3
+      },
+      "guaranteed": "rare",
+      "active": true,
+      "sort": 1
+    },
+    {
+      "id": "p3",
+      "name": "Championship Pack",
+      "description": "Three premium cards — at least one Circuit Special.",
+      "cost": 600,
+      "size": 3,
+      "odds": {
+        "common": 0,
+        "rare": 45,
+        "circuit": 45,
+        "signature": 10
+      },
+      "guaranteed": "circuit",
+      "active": true,
+      "sort": 2
+    }
+  ]
+}
