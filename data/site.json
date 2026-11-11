@@ -87,27 +87,39 @@
       "bio": "Founder and team principal.",
       "sort": 1,
       "stats": {},
-      "photo": "uploads/2026/mwclfang6f1vf.png"
+      "photo": "uploads/2026/mwcqmfj6uxh8i.png"
     },
     {
       "id": "m5",
-      "name": "Jordan Blake",
+      "name": "Alexandros Margaritis",
       "role": "Race Engineer",
-      "nationality": "United States",
+      "nationality": "Greece",
       "is_driver": false,
       "bio": "The calm voice on the radio, translating data into lap time.",
-      "sort": 4,
-      "stats": {}
+      "sort": 3,
+      "stats": {},
+      "photo": "uploads/2026/mwcqn9mv0cjnk.png"
     },
     {
       "id": "m6",
-      "name": "Priya Shah",
-      "role": "Head of Strategy",
-      "nationality": "India",
+      "name": "Cassandra Leeks",
+      "role": "Performance Engineer",
+      "nationality": "USA",
       "is_driver": false,
       "bio": "Undercuts, overcuts and safety-car gambles — Priya calls them all.",
-      "sort": 5,
-      "stats": {}
+      "sort": 4,
+      "stats": {},
+      "hometown": "Atlanta, USA",
+      "photo": "uploads/2026/mwcqo9411on1m.png"
+    },
+    {
+      "id": "mmwcqp6lb9lnj",
+      "name": "Tao Yuze",
+      "role": "Performance Engineer",
+      "is_driver": false,
+      "photo": "uploads/2026/mwcqp482x8kqz.png",
+      "stats": {},
+      "sort": 6
     }
   ],
   "races": [
@@ -367,7 +379,7 @@
   ],
   "media": [],
   "_rev": {
-    "id": "e598dheo",
-    "at": "2026-11-11T22:57:45.190Z"
+    "id": "q4qerb33",
+    "at": "2026-11-11T23:18:21.137Z"
   }
 }
