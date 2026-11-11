@@ -2,12 +2,6 @@
 'use strict';
 
 const S = { settings: {}, statFields: [], cleanup: [], data: null };
-const STAT_FIELDS = [
-  { key: 'starts', label: 'Race Starts' }, { key: 'wins', label: 'Wins' }, { key: 'podiums', label: 'Podiums' },
-  { key: 'poles', label: 'Pole Positions' }, { key: 'fastest_laps', label: 'Fastest Laps' }, { key: 'points', label: 'Career Points' },
-  { key: 'championships', label: 'Championships' }, { key: 'best_finish', label: 'Best Finish', lowerBetter: true },
-  { key: 'avg_finish', label: 'Avg. Finish', lowerBetter: true }, { key: 'dnfs', label: 'DNFs', lowerBetter: true },
-];
 const color = () => S.settings.primary_color || '#857452';
 const app = $('#app');
 
@@ -30,6 +24,9 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* storage unavailable */ } },
 };
+
+// Driver stats are calculated from the race results entered in the admin console
+const driverStats = (m) => ({ ...computeStats(DATA.races(), m.name, S.settings), championships: m.stats?.championships });
 
 // ------------------------------------------------------------------ boot
 async function boot() {
@@ -89,17 +86,19 @@ function renderAccount() {
     <a href="admin.html" class="btn btn-sm btn-primary admin-btn">Admin Console</a>`;
   $('#navMobileAcct').innerHTML = '';
   $('#themeBtn').onclick = () => setTheme(light ? 'dark' : 'light');
+  // remember this page so leaving the admin console brings you straight back here
+  $('.admin-btn').onclick = () => { try { sessionStorage.setItem('apx_return', location.hash || '#/'); } catch { /* ignore */ } };
 }
 
 // ------------------------------------------------------------------ router
-const ROUTES = { '': home, home, schedule, team, news, media, compare };
+const ROUTES = { '': home, home, schedule, team, news, media, compare, race };
 async function router() {
   S.cleanup.forEach((fn) => { try { fn(); } catch { /* ignore */ } }); S.cleanup = [];
   document.body.classList.remove('menu-open', 'modal-open');
   const [pathPart, query = ''] = location.hash.replace(/^#\/?/, '').split('?');
   const [name, ...args] = pathPart.split('/').filter(Boolean);
   const params = new URLSearchParams(query);
-  $$('#navLinks a').forEach((a) => a.classList.toggle('active', a.dataset.route === (name || 'home')));
+  $$('#navLinks a').forEach((a) => a.classList.toggle('active', a.dataset.route === (name === 'race' ? 'schedule' : name || 'home')));
   const view = ROUTES[name || ''] || notFound;
   app.innerHTML = '<div class="loading"><span></span></div>';
   try { await view(args, params); }
@@ -248,12 +247,13 @@ async function schedule(_args, params) {
       ${sorted.length ? `<div class="race-list">${sorted.map((r) => {
         const done = r.status === 'completed', isNext = next && next.id === r.id;
         const d = r.date ? new Date(r.date + 'T12:00:00') : null;
-        return `<div class="race-row ${done ? 'done' : ''} ${isNext ? 'is-next' : ''}">
+        const res = hasResults(r);
+        return `<${res ? `a href="#/race/${encodeURIComponent(r.id)}"` : 'div'} class="race-row ${done ? 'done' : ''} ${isNext ? 'is-next' : ''} ${res ? 'has-results' : ''}">
           <div class="race-date">${d ? `<b>${d.getDate()}</b><span>${d.toLocaleDateString(undefined, { month: 'short' })}</span>` : '<b>TBC</b>'}</div>
           <div class="race-round">R${esc(r.round || '–')}</div>
           <div class="race-main"><h3>${esc(r.name)}</h3><div class="muted small">${esc([r.circuit, r.country].filter(Boolean).join(' · '))}${r.time && !done ? ` · ${esc(r.time)}` : ''}</div></div>
-          <div class="race-status">${done ? `<span class="pill">Completed</span>${r.result ? `<div class="race-result">${esc(r.result)}</div>` : ''}` : isNext ? `<span class="pill pill-live">Next race</span>${countdownHtml(r)}` : `<span class="pill pill-up">Upcoming</span>`}</div>
-        </div>`;
+          <div class="race-status">${done ? `<span class="pill">Completed</span>${r.result ? `<div class="race-result">${esc(r.result)}</div>` : ''}` : isNext ? `<span class="pill pill-live">Next race</span>${countdownHtml(r)}` : `<span class="pill pill-up">Upcoming</span>`}${res ? '<div class="race-link">Full results →</div>' : ''}</div>
+        </${res ? 'a' : 'div'}>`;
       }).join('')}</div>` : '<div class="empty">The calendar hasn\'t been published yet.</div>'}
     </div>
     <div class="tab-panel" data-panel="drivers">${standingsTable(standings.drivers, 'drivers')}</div>
@@ -273,6 +273,44 @@ async function schedule(_args, params) {
   if (next) startCountdowns();
 }
 
+// ------------------------------------------------------------------ RACE RESULTS
+async function race(args, params) {
+  const r = DATA.races().find((x) => x.id === decodeURIComponent(args[0] || ''));
+  if (!r) throw new Error('Race not found.');
+  const sess = sessionsFor(r).filter((s) => (r.results?.[s.key] || []).length);
+  if (!sess.length) throw new Error('Results for this race haven\'t been added yet.');
+  let cur = params.get('s') && sess.some((s) => s.key === params.get('s')) ? params.get('s') : sess[sess.length - 1].key;
+  const ours = new Set(DATA.members().filter((m) => m.is_driver).map((m) => normName(m.name)));
+  const highlight = store.get('highlightOurs', true);
+  app.innerHTML = `${pageHead(`Round ${esc(r.round || '–')} · ${esc(fmtDate(r.date, { day: 'numeric', month: 'long', year: 'numeric' }))}`, esc(r.name), esc([r.circuit, r.country].filter(Boolean).join(' · ')))}
+  <section class="wrap section">
+    <a class="link-back" href="#/schedule">← Race calendar</a>
+    <div class="toolbar"><div class="tabs" id="sessTabs">${sess.map((s) => `<button class="tab" data-s="${s.key}">${s.label}</button>`).join('')}</div></div>
+    <div id="sessBody"></div>
+  </section>`;
+  app.classList.toggle('hl-ours', highlight); onCleanup(() => app.classList.remove('hl-ours'));
+  const draw = () => {
+    const S2 = SESSIONS.find((s) => s.key === cur), rows = r.results[cur] || [];
+    const isRace = S2.kind === 'race';
+    const anyTyres = rows.some((x) => x.ty);
+    $$('#sessTabs .tab').forEach((b) => b.setAttribute('aria-selected', b.dataset.s === cur));
+    $('#sessBody').innerHTML = `<div class="table-wrap"><table class="standings results">
+      <thead><tr><th>Pos</th><th>Driver</th><th class="hide-sm">Team</th><th>${isRace ? 'Time / Gap' : 'Best lap'}</th>${anyTyres ? '<th>Tyres</th>' : ''}${isRace ? '<th class="num">Pts</th>' : ''}</tr></thead>
+      <tbody>${rows.map((x, i) => {
+        const st = x.st || 'fin', isOurs = ours.has(normName(x.d)), pts = isRace ? rowPoints(cur, i + 1, x, S.settings) : 0;
+        return `<tr class="${isOurs ? 'ours' : ''} ${st !== 'fin' ? 'out' : ''}">
+          <td class="pos">${st === 'fin' ? i + 1 : `<span class="st-tag">${STATUS[st]}</span>`}</td>
+          <td class="name">${esc(x.d)}${isOurs ? '<span class="ours-tag">Our team</span>' : ''}${x.fl ? '<span class="fl-tag" title="Fastest lap">⏱ Fastest lap</span>' : ''}<div class="show-sm muted small">${esc(x.t || '')}</div></td>
+          <td class="hide-sm muted">${esc(x.t || '')}</td>
+          <td class="mono">${esc(x.time || (st !== 'fin' ? '—' : ''))}</td>
+          ${anyTyres ? `<td class="tyres">${tyreChips(x.ty)}</td>` : ''}
+          ${isRace ? `<td class="num"><b>${pts || ''}</b></td>` : ''}</tr>`;
+      }).join('')}</tbody></table></div>`;
+  };
+  $('#sessTabs').onclick = (e) => { const b = e.target.closest('.tab'); if (b) { cur = b.dataset.s; history.replaceState(null, '', `#/race/${encodeURIComponent(r.id)}?s=${cur}`); draw(); } };
+  draw();
+}
+
 // ------------------------------------------------------------------ TEAM (carousel)
 async function team(args) {
   const members = DATA.members();
@@ -282,7 +320,7 @@ async function team(args) {
   app.innerHTML = `${pageHead('The people behind the car', 'Our Team')}
   <section class="section team-section">
     <div class="wrap toolbar center">
-      <div class="tabs">${[['all', 'Everyone'], ['drivers', 'Drivers'], ['crew', 'Trackside']].map(([k, l]) => `<button class="tab" data-f="${k}">${l}</button>`).join('')}</div>
+      <div class="tabs">${[['crew', 'Trackside'], ['drivers', 'Drivers'], ['all', 'Everyone']].map(([k, l]) => `<button class="tab" data-f="${k}">${l}</button>`).join('')}</div>
     </div>
     <div class="carousel" id="carousel">
       <button class="car-arrow prev" aria-label="Previous">‹</button>
@@ -296,7 +334,8 @@ async function team(args) {
   const track = $('#track'), viewport = $('.car-viewport');
   let list = [];
   const build = () => {
-    list = members.filter((m) => filter === 'all' || (filter === 'drivers' ? m.is_driver : !m.is_driver));
+    list = members.filter((m) => filter === 'all' || (filter === 'drivers' ? m.is_driver : !m.is_driver))
+      .sort((a, b) => (a.is_driver ? 1 : 0) - (b.is_driver ? 1 : 0)); // Trackside first, then Drivers
     idx = Math.min(idx, Math.max(0, list.length - 1));
     track.innerHTML = list.length ? list.map((m, i) => `
       <article class="slide" data-i="${i}">
@@ -362,8 +401,8 @@ async function profile(members, id) {
   const i = members.findIndex((x) => x.id === id);
   const prev = members[(i - 1 + members.length) % members.length], nxt = members[(i + 1) % members.length];
   const age = ageFrom(m.birthdate);
-  const stats = m.stats || {};
-  const hasStats = m.is_driver && S.statFields.some((f) => stats[f.key] !== undefined && stats[f.key] !== '');
+  const stats = m.is_driver ? driverStats(m) : {};
+  const hasStats = m.is_driver && stats.hasResults;
   const teammate = members.find((x) => x.is_driver && x.id !== m.id);
   const facts = [
     ['Role', m.role], ['Number', m.number], ['Nationality', m.nationality], ['Hometown', m.hometown],
@@ -392,7 +431,7 @@ async function profile(members, id) {
       <h2>Biography</h2>
       <div class="prose">${m.bio ? md(m.bio) : '<p class="muted">Biography coming soon.</p>'}</div>
     </div>
-    ${hasStats ? `<aside><h2>Career stats</h2><div class="stat-grid">${S.statFields.filter((f) => stats[f.key] !== undefined && stats[f.key] !== '').map((f) =>
+    ${hasStats ? `<aside><h2>Season stats</h2><div class="stat-grid">${S.statFields.filter((f) => stats[f.key] !== undefined && stats[f.key] !== '').map((f) =>
       `<div class="stat"><b>${esc(stats[f.key])}</b><span>${esc(f.label)}</span></div>`).join('')}</div></aside>` : ''}
   </section>
   ${members.length > 1 ? `<section class="wrap profile-pager">
@@ -484,9 +523,19 @@ async function compare(_args, params) {
   const draw = () => {
     $$('.pick').forEach((b) => b.classList.toggle('on', sel.includes(b.dataset.id)));
     const ds = sel.map((id) => drivers.find((d) => d.id === id));
+    const st = new Map(ds.map((d) => [d.id, driverStats(d)]));
     const leads = new Map(ds.map((d) => [d.id, 0]));
+    let h2h = '';
+    if (ds.length === 2) {
+      const races = DATA.races();
+      h2h = [['quali', 'Qualifying head-to-head'], ['race', 'Race head-to-head']].map(([k, label]) => {
+        const [a, b] = headToHead(races, ds[0].name, ds[1].name, k), tot = a + b;
+        if (!tot) return '';
+        return `<div class="cmp-row h2h-row"><div class="cmp-label">${label}</div>${[a, b].map((v, i) => `<div class="cmp-cell ${v > [a, b][1 - i] ? 'best' : ''}"><b>${v}</b><div class="cmp-bar"><i style="width:${(v / tot) * 100}%"></i></div></div>`).join('')}</div>`;
+      }).join('');
+    }
     const rows = S.statFields.map((f) => {
-      const vals = ds.map((d) => { const v = parseFloat(d.stats?.[f.key]); return isNaN(v) ? null : v; });
+      const vals = ds.map((d) => { const v = parseFloat(st.get(d.id)[f.key]); return isNaN(v) ? null : v; });
       const valid = vals.filter((v) => v !== null);
       const best = valid.length ? (f.lowerBetter ? Math.min(...valid) : Math.max(...valid)) : null;
       const max = Math.max(...valid, 0) || 1;
@@ -500,7 +549,8 @@ async function compare(_args, params) {
     $('#cmp').innerHTML = `<div class="cmp" style="--cols:${ds.length}">
       <div class="cmp-row cmp-head"><div></div>${ds.map((d) => `<a class="cmp-driver" href="#/team/${d.id}">
         <img src="${esc(photoOf(d, color()))}" alt=""><div><b>${esc(d.name)}</b><span>${d.number ? `#${esc(d.number)} · ` : ''}${leads.get(d.id)} stat${leads.get(d.id) === 1 ? '' : 's'} led</span></div></a>`).join('')}</div>
-      ${rows}</div>`;
+      ${h2h}${rows}</div>
+      ${ds.some((d) => st.get(d.id).hasResults) ? '' : '<p class="muted small center cmp-note">Stats fill in automatically as race results are added.</p>'}`;
   };
   $('#picker').onclick = (e) => {
     const b = e.target.closest('.pick'); if (!b) return;
@@ -567,7 +617,7 @@ function buildSearchIndex() {
     .forEach(([t, h, x]) => add('Page', t, '', h, x));
   DATA.members().forEach((m) => add('Team', m.name, [m.role, m.number ? `#${m.number}` : '', m.nationality].filter(Boolean).join(' · '), `#/team/${encodeURIComponent(m.id)}`, `${m.hometown || ''} ${strip(m.bio)}`, photoOf(m, color())));
   DATA.news().forEach((n) => add('News', n.title, [fmtDate(n.published_at), n.excerpt].filter(Boolean).join(' — '), `#/news/${encodeURIComponent(n.slug)}`, `${n.author || ''} ${strip(n.body)}`, safeUrl(n.cover)));
-  DATA.races().forEach((r) => add('Race', r.name, [r.round ? `Round ${r.round}` : '', r.circuit, fmtDate(r.date), r.result].filter(Boolean).join(' · '), '#/schedule', `${r.country || ''} ${r.status || ''}`));
+  DATA.races().forEach((r) => add('Race', r.name, [r.round ? `Round ${r.round}` : '', r.circuit, fmtDate(r.date), r.result].filter(Boolean).join(' · '), hasResults(r) ? `#/race/${encodeURIComponent(r.id)}` : '#/schedule', `${r.country || ''} ${r.status || ''}`));
   const st = DATA.standings();
   st.drivers.forEach((d) => add('Standings', d.driver, `P${d.pos} · ${d.points} pts${d.team ? ` · ${d.team}` : ''}`, '#/schedule?tab=drivers', 'drivers championship'));
   st.constructors.forEach((c) => add('Standings', c.team, `P${c.pos} · ${c.points} pts · Constructors`, '#/schedule?tab=constructors', 'constructors championship team'));

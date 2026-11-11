@@ -472,3 +472,21 @@ body.modal-open .fab { display: none; }
 .search-type { font-size: .68rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; flex-shrink: 0; }
 .search-empty { padding: 30px; text-align: center; color: var(--muted); }
 @media (max-width: 640px) { .search-panel { padding: 12px 12px 76px; align-items: stretch; } .search-box { max-height: none; } }
+
+/* ===== Race results ===== */
+a.race-row.has-results { cursor: pointer; transition: border-color .2s, transform .15s; }
+a.race-row.has-results:hover { border-color: var(--accent); transform: translateX(3px); }
+.race-link { margin-top: 6px; font-size: .82rem; font-weight: 700; color: var(--accent-ink); }
+.results td { padding-top: 11px; padding-bottom: 11px; }
+.results tr.out td { opacity: .65; }
+.results .mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-size: .9rem; }
+.st-tag { font-size: .7rem; font-style: normal; font-weight: 800; letter-spacing: .06em; padding: 2px 7px; border-radius: 4px; background: var(--panel-2); color: var(--muted); border: 1px solid var(--line); }
+.fl-tag { display: inline-block; margin-left: 10px; font-size: .68rem; font-weight: 700; padding: 2px 8px; border-radius: 99px; background: #7b2cbf; color: #fff; vertical-align: middle; }
+.tyres { white-space: nowrap; }
+.tyre { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; font-size: .68rem; font-weight: 900; color: var(--text); background: var(--bg); border: 3px solid currentColor; vertical-align: middle; }
+.tyre.t-S { color: #e10600; } .tyre.t-M { color: #e8b800; } .tyre.t-H { color: #bdbdbd; } .tyre.t-I { color: #39b54a; } .tyre.t-W { color: #2a7fff; }
+.tyre-arrow { font-style: normal; color: var(--muted); margin: 0 3px; }
+.show-sm { display: none; }
+@media (max-width: 640px) { .show-sm { display: block; } }
+.h2h-row { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.cmp-note { margin-top: 14px; }

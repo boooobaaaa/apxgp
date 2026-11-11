@@ -191,3 +191,39 @@ code { background: var(--bg); padding: 1px 6px; border-radius: 4px; font-size: .
 .ui-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .btn-danger { background: #b3261e; border-color: #b3261e; color: #fff; }
 .btn-danger:hover:not(:disabled) { background: #c62f26; border-color: #c62f26; }
+
+/* ===== Race results editor ===== */
+.drawer-panel.wide { width: min(1320px, 100%); }
+.res-tabs { margin: 6px 0 14px; }
+.res-tabs .tab small { display: inline-grid; place-items: center; min-width: 20px; height: 18px; padding: 0 5px; border-radius: 99px; background: rgba(0,0,0,.25); font-size: .7rem; margin-left: 4px; }
+.res-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px; }
+.res-tools select { width: auto; margin: 0; padding: 7px 10px; font-size: .85rem; }
+.res-table td { padding: 6px 6px; }
+.res-table .ty-set .tyre { width: 22px; height: 22px; font-size: .62rem; border-width: 2.5px; }
+.res-table th { padding: 10px 8px; }
+.res-table input:not([type=radio]), .res-table select { margin: 0; padding: 7px 9px; font-size: .88rem; min-width: 0; }
+.res-table input:not([type=radio]) { width: 100%; }
+.res-table td:nth-child(2) { min-width: 140px; }
+.res-table td:nth-child(3) { min-width: 110px; }
+.res-table td:nth-child(4) { width: 136px; }
+.res-table .mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+.res-table .pos { font-weight: 900; font-style: italic; width: 40px; }
+.res-table .pts { font-weight: 700; color: var(--accent-ink); }
+.res-table input[type=radio] { width: 18px; height: 18px; accent-color: #7b2cbf; margin: 0; }
+.res-table tr.mine td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.res-table tr.mine td:first-child { box-shadow: inset 3px 0 var(--accent); }
+.res-table .row-actions .btn { padding: 5px 9px; margin-left: 2px; }
+.ty-cell { white-space: nowrap; }
+.ty-set { display: inline-flex; gap: 3px; margin-right: 6px; vertical-align: middle; }
+.ty-set .tyre { cursor: pointer; padding: 0; }
+.ty-set .tyre:hover { opacity: .6; }
+.ty-add { display: inline-flex; gap: 3px; vertical-align: middle; }
+.tyre-add { width: 22px; height: 22px; display: inline-grid; place-items: center; border: 1.5px dashed currentColor; background: none; border-radius: 50%; font-size: .62rem; font-weight: 800; padding: 0; cursor: pointer; }
+.tyre-add.t-S { color: #e10600; } .tyre-add.t-M { color: #c9a000; } .tyre-add.t-H { color: #9e9e9e; } .tyre-add.t-I { color: #2e9e3e; } .tyre-add.t-W { color: #2a7fff; }
+.tyre-add:hover { background: var(--panel-2); }
+.add-row { margin-top: 10px; }
+.res-help { margin-top: 14px; }
+.res-pill { font-size: .62rem; padding: 2px 7px; }
+.ui-dialog-box.wide { width: min(620px, 100%); }
+.ui-dialog-box textarea { margin: 0 0 18px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .88rem; }
+.back-site { white-space: nowrap; }

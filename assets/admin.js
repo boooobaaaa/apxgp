@@ -12,12 +12,6 @@ const A = {
   dirty: false, section: 'dashboard',
 };
 const root = $('#admin');
-const STAT_FIELDS = [
-  { key: 'starts', label: 'Race Starts' }, { key: 'wins', label: 'Wins' }, { key: 'podiums', label: 'Podiums' },
-  { key: 'poles', label: 'Pole Positions' }, { key: 'fastest_laps', label: 'Fastest Laps' }, { key: 'points', label: 'Career Points' },
-  { key: 'championships', label: 'Championships' }, { key: 'best_finish', label: 'Best Finish' },
-  { key: 'avg_finish', label: 'Avg. Finish' }, { key: 'dnfs', label: 'DNFs' },
-];
 const src = (p) => (p && A.previews.get(p)) || p || '';
 const newId = (p) => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const store = {
@@ -90,7 +84,7 @@ const GH = {
     let head = await GH.headSha();
     if (head !== A.baseSha) {
       const remote = await GH.readFile('data/site.json', head);
-      if (remote !== A.baseText && !(await uiConfirm('Someone else (another admin, or an edit on GitHub) changed the site since you opened the console. Publishing now will replace their content changes with yours.', { title: 'Site was changed elsewhere', ok: 'Publish mine anyway', danger: true }))) {
+      if (remote !== A.baseText && !(await uiConfirm('Someone else (another admin, or an edit on GitHub) changed the site since you opened the console. Publishing now will replace their content changes with yours.', { title: 'Site Was Changed Elsewhere', ok: 'Publish Mine Anyway', danger: true }))) {
         throw new Error('Publish cancelled. Reload the console to get the latest content.');
       }
     }
@@ -176,6 +170,150 @@ async function addAudio(file) {
   A.pending.set(path, file);
   A.previews.set(path, URL.createObjectURL(file));
   return path;
+}
+
+// ================================================================ race results editor
+function lastName(n) { const p = String(n || '').trim().split(/\s+/); return p.length > 1 ? p[p.length - 1] : p[0] || ''; }
+function raceSummary(race) {
+  const rows = race.results?.race || [];
+  const ours = new Set(A.data.members.filter((m) => m.is_driver).map((m) => normName(m.name)));
+  return rows.map((r, i) => ({ r, i })).filter(({ r }) => ours.has(normName(r.d)))
+    .map(({ r, i }) => `${(r.st || 'fin') === 'fin' ? `P${i + 1}` : STATUS[r.st]} ${lastName(r.d)}`).join(' · ');
+}
+function textDialog(title, help, placeholder) {
+  return new Promise((resolve) => {
+    const ov = document.createElement('div');
+    ov.className = 'ui-dialog';
+    ov.innerHTML = `<div class="ui-dialog-box wide"><h3>${esc(title)}</h3><p>${esc(help)}</p>
+      <textarea rows="12" placeholder="${esc(placeholder)}"></textarea>
+      <div class="ui-dialog-actions"><button type="button" class="btn btn-ghost" data-v="0">Cancel</button><button type="button" class="btn btn-primary" data-v="1">Add To Results</button></div></div>`;
+    document.body.appendChild(ov);
+    const ta = $('textarea', ov);
+    const done = (v) => { window.removeEventListener('keydown', key, true); ov.remove(); resolve(v); };
+    const key = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); done(null); } };
+    window.addEventListener('keydown', key, true);
+    ov.addEventListener('click', (e) => { const b = e.target.closest('[data-v]'); if (b) done(b.dataset.v === '1' ? ta.value : null); });
+    setTimeout(() => ta.focus(), 20);
+  });
+}
+
+function openResults(race) {
+  const work = JSON.parse(JSON.stringify(race.results || {}));
+  let hasSprint = !!race.has_sprint;
+  const sessions = () => SESSIONS.filter((s) => !s.sprint || hasSprint);
+  let cur = [...sessions()].reverse().find((s) => (work[s.key] || []).length)?.key || (hasSprint ? 'sprint_quali' : 'quali');
+  const ourSet = () => new Set(A.data.members.filter((m) => m.is_driver).map((m) => normName(m.name)));
+
+  // names/teams we already know about, for suggestions and auto-filling the team
+  const known = new Map();
+  A.data.drivers.forEach((d) => known.set(normName(d.driver), { d: d.driver, t: d.team || '' }));
+  A.data.races.forEach((r) => Object.values(r.results || {}).forEach((rows) => rows.forEach((x) => { if (x.d) known.set(normName(x.d), { d: x.d, t: x.t || known.get(normName(x.d))?.t || '' }); })));
+  A.data.members.filter((m) => m.is_driver).forEach((m) => { const k = normName(m.name); if (!known.has(k) || !known.get(k).t) known.set(k, { d: m.name, t: A.data.settings.short_name || '' }); });
+  const teams = [...new Set([...A.data.constructors.map((c) => c.team), ...[...known.values()].map((k) => k.t)].filter(Boolean))];
+
+  const panel = $('#drawerPanel');
+  panel.classList.add('wide');
+  const render = () => {
+    const S2 = SESSIONS.find((s) => s.key === cur), rows = (work[cur] = work[cur] || []), isRace = S2.kind === 'race', ours = ourSet();
+    const others = sessions().filter((s) => s.key !== cur && (work[s.key] || []).length);
+    panel.innerHTML = `<form id="rf" novalidate>
+      <div class="drawer-head"><h2>Results — ${esc(race.name)}</h2><button type="button" class="x" data-a="close" aria-label="Close">×</button></div>
+      <div class="drawer-body">
+        <label class="field check"><input type="checkbox" id="spr" ${hasSprint ? 'checked' : ''}> Sprint Weekend (adds Sprint Qualifying and Sprint)</label>
+        <div class="tabs res-tabs">${sessions().map((s) => `<button type="button" class="tab" data-s="${s.key}" aria-selected="${s.key === cur}">${s.label}${(work[s.key] || []).length ? ` <small>${work[s.key].length}</small>` : ''}</button>`).join('')}</div>
+        <div class="res-tools">
+          ${others.length ? `<select id="copyFrom"><option value="">Copy Order From…</option>${others.map((s) => `<option value="${s.key}">${s.label}</option>`).join('')}</select>` : ''}
+          ${A.data.drivers.length ? '<button type="button" class="btn btn-sm btn-ghost" data-a="standings">Fill From Standings</button>' : ''}
+          <button type="button" class="btn btn-sm btn-ghost" data-a="paste">Paste a List</button>
+          ${rows.length ? '<button type="button" class="btn btn-sm btn-ghost danger" data-a="clear">Clear Session</button>' : ''}
+        </div>
+        ${rows.length ? `<div class="table-wrap"><table class="adm-table res-table">
+          <thead><tr><th>Pos</th><th>Driver</th><th>Team</th><th>${isRace ? 'Time / Gap' : 'Best Lap'}</th>${isRace ? '<th>Status</th>' : ''}<th title="Click a compound to add a stint; click a stint to remove it">Tyres <span class="muted">(yours)</span></th>${isRace ? '<th title="Fastest lap">FL</th>' : ''}${isRace ? '<th>Pts</th>' : ''}<th></th></tr></thead>
+          <tbody>${rows.map((x, i) => {
+            const mine = ours.has(normName(x.d));
+            return `<tr data-i="${i}" class="${mine ? 'mine' : ''}">
+              <td class="pos">${i + 1}</td>
+              <td><input data-f="d" value="${esc(x.d || '')}" list="dl-drivers" placeholder="Driver name"></td>
+              <td><input data-f="t" value="${esc(x.t || '')}" list="dl-teams" placeholder="Team"></td>
+              <td><input data-f="time" value="${esc(x.time || '')}" placeholder="${isRace ? (i ? '+5.123' : '1:32:14.221') : '1:29.708'}" class="mono"></td>
+              ${isRace ? `<td><select data-f="st">${Object.entries(STATUS).map(([k, l]) => `<option value="${k}" ${(x.st || 'fin') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td>` : ''}
+              <td class="ty-cell">${mine ? `<span class="ty-set">${[...String(x.ty || '')].map((c, k) => `<button type="button" class="tyre t-${c}" data-rmty="${k}" title="Remove ${TYRES[c]?.[0] || c}">${c}</button>`).join('')}</span>
+                <span class="ty-add">${Object.entries(TYRES).map(([c, [name]]) => `<button type="button" class="tyre-add t-${c}" data-addty="${c}" title="Add a ${name} stint">${c}</button>`).join('')}</span>` : '<span class="muted">—</span>'}</td>
+              ${isRace ? `<td><input type="radio" name="fl" data-fl ${x.fl ? 'checked' : ''} title="Fastest lap"></td><td class="pts">${rowPoints(cur, i + 1, x, A.data.settings) || ''}</td>` : ''}
+              <td class="row-actions"><button type="button" class="btn btn-sm btn-ghost" data-mv="-1" ${i ? '' : 'disabled'} title="Move up">↑</button><button type="button" class="btn btn-sm btn-ghost" data-mv="1" ${i < rows.length - 1 ? '' : 'disabled'} title="Move down">↓</button><button type="button" class="btn btn-sm btn-ghost danger" data-a="del" title="Remove">✕</button></td>
+            </tr>`;
+          }).join('')}</tbody></table></div>` : `<div class="empty panel small">No ${esc(S2.label)} results yet. Add drivers one by one, paste a list, ${A.data.drivers.length ? 'fill from the standings' : ''}${others.length ? ' or copy the order from another session' : ''}.</div>`}
+        <button type="button" class="btn btn-ghost btn-sm add-row" data-a="add">+ Add Driver</button>
+        <p class="small muted res-help">Put drivers in finishing order (use ↑ ↓ to adjust). Points use F1 scoring — Grand Prix 25-18-15-12-10-8-6-4-2-1, Sprint 8-7-6-5-4-3-2-1 — and drivers marked DNF/DNS/DSQ score nothing. Saving updates every driver's stats automatically.</p>
+        <datalist id="dl-drivers">${[...known.values()].map((k) => `<option value="${esc(k.d)}">`).join('')}</datalist>
+        <datalist id="dl-teams">${teams.map((t) => `<option value="${esc(t)}">`).join('')}</datalist>
+      </div>
+      <div class="drawer-foot"><span class="grow"></span><button type="button" class="btn btn-ghost" data-a="close">Cancel</button><button class="btn btn-primary">Save Results</button></div>
+    </form>`;
+  };
+  const rowsNow = () => (work[cur] = work[cur] || []);
+
+  panel.oninput = (e) => {
+    const tr = e.target.closest('tr[data-i]'), f = e.target.dataset.f;
+    if (tr && f && f !== 'st') { const x = rowsNow()[Number(tr.dataset.i)]; if (e.target.value.trim()) x[f] = e.target.value; else delete x[f]; }
+  };
+  panel.onchange = (e) => {
+    const tr = e.target.closest('tr[data-i]');
+    if (e.target.id === 'spr') { hasSprint = e.target.checked; if (!sessions().some((s) => s.key === cur)) cur = 'quali'; return render(); }
+    if (e.target.id === 'copyFrom' && e.target.value) {
+      work[cur] = (work[e.target.value] || []).map((x) => ({ d: x.d, ...(x.t ? { t: x.t } : {}) }));
+      toast(`Copied the order from ${SESSIONS.find((s) => s.key === e.target.value).label} — now adjust it`, 'ok'); return render();
+    }
+    if (!tr) return;
+    const x = rowsNow()[Number(tr.dataset.i)];
+    if (e.target.dataset.f === 'st') { if (e.target.value === 'fin') delete x.st; else x.st = e.target.value; return render(); }
+    if (e.target.dataset.f === 'd') { // fill the team in for drivers we know
+      const k = known.get(normName(x.d)); if (k && !x.t && k.t) x.t = k.t; if (k) x.d = k.d; return render();
+    }
+    if (e.target.matches('[data-fl]')) { rowsNow().forEach((r) => delete r.fl); x.fl = true; return render(); }
+  };
+  panel.onclick = async (e) => {
+    const b = e.target.closest('button, [data-s]'); if (!b) return;
+    const tr = e.target.closest('tr[data-i]'), i = tr ? Number(tr.dataset.i) : -1, rows = rowsNow();
+    if (b.dataset.s) { cur = b.dataset.s; return render(); }
+    if (b.dataset.mv) { const j = i + Number(b.dataset.mv); [rows[i], rows[j]] = [rows[j], rows[i]]; return render(); }
+    if (b.dataset.addty) { rows[i].ty = (rows[i].ty || '') + b.dataset.addty; return render(); }
+    if (b.dataset.rmty !== undefined) { const t = [...rows[i].ty]; t.splice(Number(b.dataset.rmty), 1); rows[i].ty = t.join(''); if (!rows[i].ty) delete rows[i].ty; return render(); }
+    switch (b.dataset.a) {
+      case 'close': return closeDrawer();
+      case 'del': rows.splice(i, 1); return render();
+      case 'add': rows.push({ d: '' }); render(); $$('#rf tr[data-i] input[data-f="d"]').pop()?.focus(); return;
+      case 'clear': if (await uiConfirm(`All ${SESSIONS.find((s) => s.key === cur).label} rows will be removed.`, { title: 'Clear This Session?', ok: 'Clear', danger: true })) { work[cur] = []; render(); } return;
+      case 'standings':
+        work[cur] = [...A.data.drivers].sort((a, b) => (a.pos || 99) - (b.pos || 99)).map((d) => ({ d: d.driver, ...(d.team ? { t: d.team } : {}) }));
+        toast('Filled with every driver from the standings — now put them in finishing order', 'ok'); return render();
+      case 'paste': {
+        const txt = await textDialog('Paste a List', 'One driver per line, in finishing order. You can add the team and time after commas or tabs (straight from a spreadsheet works), e.g. "Alex Mercer, APX GP, 1:29.708". Position numbers at the start are ignored.', '1. Alex Mercer, APX GP, 1:29.708\n2. L. Fontaine, Vertex Motorsport, +0.142\n3. Mateo Ruiz');
+        if (!txt) return;
+        const add = txt.split(/\r?\n/).map((l) => l.replace(/^\s*(P?\d+)[.):\-\s]+/i, '').trim()).filter(Boolean).map((l) => {
+          const [d, t, time] = l.split(/\t|,|;/).map((p) => p.trim());
+          const k = known.get(normName(d));
+          return { d: k ? k.d : d, ...(t || k?.t ? { t: t || k.t } : {}), ...(time ? { time } : {}) };
+        });
+        work[cur] = rows.filter((r) => r.d).concat(add); toast(`Added ${add.length} drivers`, 'ok'); return render();
+      }
+    }
+  };
+  panel.onsubmit = (e) => {
+    e.preventDefault();
+    const clean = {};
+    for (const s of sessions()) {
+      const rows = (work[s.key] || []).filter((x) => x.d && x.d.trim()).map((x) => ({ ...x, d: x.d.trim() }));
+      if (rows.length) clean[s.key] = rows;
+    }
+    if (Object.keys(clean).length) race.results = clean; else delete race.results;
+    if (hasSprint) race.has_sprint = true; else delete race.has_sprint;
+    if (clean.race) { race.status = 'completed'; const sum = raceSummary(race); if (sum) race.result = sum; }
+    setDirty(); closeDrawer(); route();
+    toast('Results saved — stats are updated. Press Publish to Site to put them live.', 'ok');
+  };
+  render();
+  $('#drawer').hidden = false; document.body.classList.add('modal-open');
 }
 
 // ================================================================ in-console dialogs
@@ -407,9 +545,9 @@ async function adjustExisting(path, aspect) {
 // ================================================================ sections
 const SECTIONS = {
   dashboard: { title: 'Dashboard', icon: '◧' },
-  settings: { title: 'Site settings', icon: '⚙' },
+  settings: { title: 'Site Settings', icon: '⚙' },
   members: {
-    title: 'Team members', icon: '👤', res: 'members', singular: 'member', idp: 'm',
+    title: 'Team Members', icon: '👤', res: 'members', singular: 'Member', idp: 'm',
     help: 'Everyone shown on the Team page. Mark drivers so they appear on the home page and in Compare. Sort order controls the carousel order.',
     sort: (a, b) => (Number(a.sort) || 0) - (Number(b.sort) || 0),
     cols: [['photo', 'thumb'], ['name'], ['role'], ['number', 'No.'], ['is_driver', 'Driver', 'bool'], ['sort', 'Order']],
@@ -421,14 +559,15 @@ const SECTIONS = {
       { k: 'birthdate', label: 'Date of birth', type: 'date', half: true }, { k: 'photo', label: 'Photo', type: 'image', aspect: '4:5' },
       { k: 'instagram', label: 'Instagram URL', half: true }, { k: 'twitter', label: 'X / Twitter URL', half: true },
       { k: 'bio', label: 'Biography', type: 'markdown', rows: 8 },
-      { k: 'stats', label: 'Driver stats (used on profile + Compare)', type: 'stats' },
+      { k: 'stats', label: 'Driver stats', type: 'stats' },
     ],
   },
   races: {
-    title: 'Race schedule', icon: '🏁', res: 'races', singular: 'race', idp: 'r',
-    help: 'Set status to Completed and add a short result line after each race. The next upcoming race gets a live countdown.',
+    title: 'Race Schedule', icon: '🏁', res: 'races', singular: 'Race', idp: 'r',
+    help: 'Add each race to the calendar, then use Add Results after the weekend. Entering results marks the race completed, writes the summary line and updates every driver\'s stats.',
     sort: (a, b) => String(a.date || '').localeCompare(String(b.date || '')) || (a.round || 0) - (b.round || 0),
-    cols: [['round', 'Rnd'], ['name'], ['circuit'], ['date', 'Date', 'date'], ['status', 'Status', 'status'], ['result']],
+    cols: [['round', 'Rnd'], ['name'], ['date', 'Date', 'date'], ['status', 'Status', 'status'], ['results', 'Results', 'results'], ['result', 'Summary']],
+    extraAction: (r) => `<button class="btn btn-sm btn-primary" data-results="${esc(r.id)}">${r.results ? 'Edit Results' : 'Add Results'}</button>`,
     fields: () => [
       { k: 'name', label: 'Race name', req: true, ph: 'Italian Grand Prix' }, { k: 'round', label: 'Round', type: 'number', half: true },
       { k: 'status', label: 'Status', type: 'select', half: true, opts: [['upcoming', 'Upcoming'], ['completed', 'Completed']] },
@@ -438,7 +577,7 @@ const SECTIONS = {
     ],
   },
   drivers: {
-    title: "Drivers' standings", icon: '🏆', res: 'drivers', singular: 'driver entry', idp: 'd', standings: true,
+    title: "Drivers' Standings", icon: '🏆', res: 'drivers', singular: 'Driver Entry', idp: 'd', standings: true,
     help: 'Tick "Our team" on your drivers — they get highlighted on the Standings page.',
     sort: (a, b) => (a.pos || 99) - (b.pos || 99),
     cols: [['pos', 'Pos'], ['driver'], ['team'], ['points', 'Pts'], ['is_ours', 'Our team', 'bool']],
@@ -449,7 +588,7 @@ const SECTIONS = {
     ],
   },
   constructors: {
-    title: "Constructors' standings", icon: '🏭', res: 'constructors', singular: 'team entry', idp: 't', standings: true,
+    title: "Constructors' Standings", icon: '🏭', res: 'constructors', singular: 'Team Entry', idp: 't', standings: true,
     help: 'Tick "Our team" on your constructor entry to highlight it.',
     sort: (a, b) => (a.pos || 99) - (b.pos || 99),
     cols: [['pos', 'Pos'], ['team'], ['points', 'Pts'], ['is_ours', 'Our team', 'bool']],
@@ -460,7 +599,7 @@ const SECTIONS = {
     ],
   },
   news: {
-    title: 'News', icon: '📰', res: 'news', singular: 'article', idp: 'n',
+    title: 'News', icon: '📰', res: 'news', singular: 'Article', idp: 'n',
     help: 'Drafts stay hidden on the site. Tick Published to put an article live. Body formatting: ## headings, **bold**, *italic*, - lists, > quotes, [links](https://…) and images via "Insert image".',
     sort: (a, b) => String(b.published_at || '').localeCompare(String(a.published_at || '')),
     cols: [['cover', 'thumb'], ['title'], ['published', 'Live', 'bool'], ['published_at', 'Date', 'date'], ['author']],
@@ -473,7 +612,7 @@ const SECTIONS = {
       { k: 'published', label: 'Published (visible on site)', type: 'check' },
     ],
   },
-  media: { title: 'Media library', icon: '🖼', help: 'Add photos for the Media page, then use ✎ Adjust to crop, rotate or brighten any of them. Group photos with albums — the site shows album filters automatically.' },
+  media: { title: 'Media Library', icon: '🖼', help: 'Add photos for the Media page, then use ✎ Adjust to crop, rotate or brighten any of them. Group photos with albums — the site shows album filters automatically.' },
   fans: { title: 'Admins', icon: '👥', help: 'Who can sign in to this console, and the GitHub connection used for publishing.' },
 };
 
@@ -482,9 +621,11 @@ const SECTIONS = {
 //  • Firebase configured (normal): admins sign in with their website account. The console
 //    checks /admins in Firestore, then uses the GitHub token stored once in /secrets/github.
 //  • No Firebase yet: fall back to pasting a GitHub token directly.
+// Where "Back to Site" goes: the page you were on when you clicked Admin Console
+const siteReturnUrl = () => { let h = '#/'; try { h = sessionStorage.getItem('apx_return') || '#/'; } catch { /* ignore */ } return `./${h}`; };
 const authShell = (inner) => `<div class="admin-auth"><div class="auth-card wide">
   <div class="brand"><img src="brand/apx-gp-logo.png" alt="" class="adm-logo theme-logo"><span>Admin</span></div>${inner}
-  <p class="small center back-link"><a class="muted" href="./">← Back to site</a></p></div></div>`;
+  <p class="small center back-link"><a class="muted" href="${siteReturnUrl()}">← Back to Site</a></p></div></div>`;
 const loadingScreen = (msg = '') => { root.innerHTML = `<div class="admin-auth"><div class="center-col"><div class="loading"><span></span></div><p class="muted small">${esc(msg)}</p></div></div>`; };
 
 const TOKEN_HELP = `<details class="help small"><summary>How do I get a token?</summary><ol>
@@ -649,33 +790,34 @@ const brandHtml = () => safeUrl(A.data.settings.logo)
 
 function shell() {
   applyTheme();
-  const site = A.gh.pagesUrl || './';
+  const site = siteReturnUrl();
   root.innerHTML = `<div class="adm">
     <aside class="adm-side">
-      <a class="brand" href="${esc(site)}" target="_blank" title="View site">${brandHtml()}</a>
+      <a class="brand" href="${esc(site)}" title="Back to the site">${brandHtml()}</a>
       <nav id="side">${Object.entries(SECTIONS).map(([k, s]) => `<a href="#${k}" data-s="${k}"><i>${s.icon}</i>${s.title}</a>`).join('')}</nav>
       <div id="liveStatus" class="live-status"></div>
       <div class="adm-user"><span class="muted small">${Auth.enabled ? 'Signed in as' : 'Connected to'}</span><b>${esc(Auth.enabled ? (Auth.state.profile?.username || Auth.state.user?.email || '') : `${A.gh.owner}/${A.gh.repo}`)}</b>
-        <div class="adm-user-actions"><a class="btn btn-sm btn-ghost" href="${esc(site)}" target="_blank">View site ↗</a><button class="btn btn-sm btn-ghost" id="out">Sign out</button>${themeBtnHtml()}</div></div>
+        <div class="adm-user-actions"><a class="btn btn-sm btn-primary back-site" href="${esc(site)}">← Back to Site</a><button class="btn btn-sm btn-ghost" id="out">Sign Out</button>${themeBtnHtml()}</div></div>
     </aside>
     <main class="adm-main" id="main"></main>
     <div class="publish-bar" id="pubBar" hidden>
-      <span><b>Unpublished changes</b> <span class="muted small">— visitors won't see them until you publish</span></span>
+      <span><b>Unpublished Changes</b> <span class="muted small">— visitors won't see them until you publish</span></span>
       <span class="grow"></span>
       <button class="btn btn-ghost btn-sm" id="discard">Discard</button>
-      <button class="btn btn-primary" id="publish">Publish to site</button>
+      <button class="btn btn-primary" id="publish">Publish to Site</button>
     </div>
     <div class="drawer" id="drawer" hidden><div class="drawer-bg"></div><div class="drawer-panel" id="drawerPanel"></div></div>
   </div>`;
   $('#out').onclick = async () => {
-    if (A.dirty && !(await uiConfirm('You have changes that haven\'t been published yet. Signing out will throw them away.', { title: 'Sign out?', ok: 'Sign out', danger: true }))) return;
+    if (A.dirty && !(await uiConfirm('You have changes that haven\'t been published yet. Signing out will throw them away.', { title: 'Sign Out?', ok: 'Sign Out', danger: true }))) return;
+    A.dirty = false;
     A.dirty = false;
     if (Auth.enabled) await Auth.signOut(); else store.del('apx_gh_token');
-    location.reload();
+    location.href = siteReturnUrl();
   };
   $('#publish').onclick = publish;
   $('#discard').onclick = async () => {
-    if (!(await uiConfirm('All changes since your last publish will be thrown away.', { title: 'Discard changes?', ok: 'Discard', danger: true }))) return;
+    if (!(await uiConfirm('All changes since your last publish will be thrown away.', { title: 'Discard Changes?', ok: 'Discard', danger: true }))) return;
     A.data = JSON.parse(A.baseText); normalise(A.data); A.pending.clear(); setDirty(false); applyTheme(); route();
   };
   wireThemeBtn();
@@ -750,7 +892,7 @@ async function publish() {
     toast(`Saved to GitHub${r.uploaded ? ` (${r.uploaded} file${r.uploaded > 1 ? 's' : ''} uploaded)` : ''} — the live site updates in 1–3 minutes. Watch the status in the sidebar.`, 'ok');
     watchLive(r.rev);
   } catch (e) { toast(e.message, 'err'); }
-  btn.disabled = false; btn.textContent = 'Publish to site';
+  btn.disabled = false; btn.textContent = 'Publish to Site';
 }
 
 function route() {
@@ -775,21 +917,21 @@ const head = (s, actions = '') => `<div class="adm-head"><div><h1>${s.title}</h1
 function dashboard(main) {
   const d = A.data;
   const drafts = d.news.filter((n) => !n.published).length;
-  const tiles = [['members', 'Team members', d.members.length], ['races', 'Races', d.races.length],
+  const tiles = [['members', 'Team Members', d.members.length], ['races', 'Races', d.races.length],
     ['news', 'Articles', `${d.news.length}${drafts ? ` <small>(${drafts} draft${drafts > 1 ? 's' : ''})</small>` : ''}`],
     ['media', 'Photos', d.media.length]];
   main.innerHTML = `${head({ title: 'Dashboard' })}
   <div class="dash-tiles">${tiles.map(([k, l, v]) => `<a class="dash-tile" href="#${k}"><b>${v}</b><span>${l}</span></a>`).join('')}</div>
   <div class="dash-cols">
-    <div class="panel"><h3>Quick actions</h3><div class="quick">
-      <button class="btn btn-primary" data-go="news">Write an article</button>
-      <a class="btn btn-ghost" href="#media">Add photos</a>
-      <a class="btn btn-ghost" href="#races">Update race results</a>
-      <a class="btn btn-ghost" href="#drivers">Update standings</a>
+    <div class="panel"><h3>Quick Actions</h3><div class="quick">
+      <button class="btn btn-primary" data-go="news">Write an Article</button>
+      <a class="btn btn-ghost" href="#media">Add Photos</a>
+      <a class="btn btn-ghost" href="#races">Enter Race Results</a>
+      <a class="btn btn-ghost" href="#drivers">Update Standings</a>
     </div></div>
-    <div class="panel"><h3>How publishing works</h3><ol class="small checklist">
+    <div class="panel"><h3>How Publishing Works</h3><ol class="small checklist">
       <li>Make as many edits as you like — they're kept in this browser tab.</li>
-      <li>Press <b>Publish to site</b> (bottom bar). Everything is saved to GitHub as one commit.</li>
+      <li>Press <b>Publish to Site</b> (bottom bar). Everything is saved to GitHub as one commit.</li>
       <li>GitHub Pages rebuilds the live site in about a minute.</li>
       <li>Every publish is in your repository history, so nothing is ever lost.</li>
     </ol>
@@ -810,12 +952,13 @@ function settingsView(main) {
       { k: 'logo_light', label: 'Logo for light mode (optional — if empty, the logo is darkened automatically)', type: 'image' },
       { k: 'hero_image', label: 'Home page hero image', type: 'image', aspect: '16:9' }]],
     ['About', [{ k: 'about', label: 'About the team (home page)', type: 'markdown', rows: 6 }]],
-    ['Social links', [{ k: 'instagram', label: 'Instagram URL', half: true }, { k: 'twitter', label: 'X / Twitter URL', half: true }, { k: 'youtube', label: 'YouTube URL', half: true }, { k: 'twitch', label: 'Twitch URL', half: true }]],
-    ['Background music', [{ k: 'music_file', label: 'Music file (loops on the site; visitors can mute it)', type: 'audio' },
+    ['Social Links', [{ k: 'instagram', label: 'Instagram URL', half: true }, { k: 'twitter', label: 'X / Twitter URL', half: true }, { k: 'youtube', label: 'YouTube URL', half: true }, { k: 'twitch', label: 'Twitch URL', half: true }]],
+    ['Race Scoring', [{ k: 'fastest_lap_point', label: 'Award 1 bonus point for the fastest lap (top-10 finishers)', type: 'check' }]],
+    ['Background Music', [{ k: 'music_file', label: 'Music file (loops on the site; visitors can mute it)', type: 'audio' },
       { k: 'music_volume', label: 'Volume (0–100)', type: 'number', half: true, def: 35 },
       { k: 'music_title', label: 'Track name (shown on hover, optional)', half: true }]],
   ];
-  main.innerHTML = `${head(SECTIONS.settings, '<span class="muted small">Changes apply as you type — press <b>Publish to site</b> when ready.</span>')}
+  main.innerHTML = `${head(SECTIONS.settings, '<span class="muted small">Changes apply as you type — press <b>Publish to Site</b> when ready.</span>')}
     <form id="sf" class="settings-form">${groups.map(([t, fs]) => `<fieldset class="panel"><legend>${t}</legend><div class="fgrid">${fs.map((f) => fieldHtml(f, s[f.k])).join('')}</div></fieldset>`).join('')}</form>`;
   const fields = groups.flatMap((g) => g[1]);
   const save = () => {
@@ -833,19 +976,20 @@ function settingsView(main) {
 function listView(main, s) {
   const rows = s.sort ? [...A.data[s.res]].sort(s.sort) : A.data[s.res];
   let actions = `<button class="btn btn-primary" id="new">+ New ${s.singular}</button>`;
-  if (s.standings) actions = `<button class="btn btn-ghost" id="reorder" title="Re-number positions by points">Auto-rank by points</button>` + actions;
+  if (s.standings) actions = `<button class="btn btn-ghost" id="reorder" title="Re-number positions by points">Auto-Rank by Points</button>` + actions;
 
   const body = rows.length ? `<div class="table-wrap"><table class="adm-table"><thead><tr>${s.cols.map(([k, l]) => `<th class="${l === 'thumb' ? 'th-thumb' : ''}">${l === 'thumb' ? '' : esc(l || k[0].toUpperCase() + k.slice(1))}</th>`).join('')}<th></th></tr></thead>
       <tbody>${rows.map((r) => `<tr>${s.cols.map(([k, l, t]) => `<td>${cell(r[k], l === 'thumb' ? 'thumb' : t)}</td>`).join('')}
-        <td class="row-actions"><button class="btn btn-sm btn-ghost" data-edit="${esc(r.id)}">Edit</button><button class="btn btn-sm btn-ghost danger" data-del="${esc(r.id)}">Delete</button></td></tr>`).join('')}</tbody></table></div>`
-      : `<div class="empty panel">Nothing here yet. <button class="btn btn-primary btn-sm" id="new2">Add the first ${s.singular}</button></div>`;
+        <td class="row-actions">${s.extraAction ? s.extraAction(r) : ''}<button class="btn btn-sm btn-ghost" data-edit="${esc(r.id)}">Edit</button><button class="btn btn-sm btn-ghost danger" data-del="${esc(r.id)}">Delete</button></td></tr>`).join('')}</tbody></table></div>`
+      : `<div class="empty panel">Nothing here yet. <button class="btn btn-primary btn-sm" id="new2">Add the First ${s.singular}</button></div>`;
   main.innerHTML = head(s, actions) + body;
   $('#new').onclick = () => openForm(s, null);
+  $$('[data-results]', main).forEach((b) => (b.onclick = () => openResults(A.data.races.find((r) => r.id === b.dataset.results))));
   $('#new2')?.addEventListener('click', () => openForm(s, null));
   $$('[data-edit]', main).forEach((b) => (b.onclick = () => openForm(s, A.data[s.res].find((r) => r.id === b.dataset.edit))));
   $$('[data-del]', main).forEach((b) => (b.onclick = async () => {
     const list = A.data[s.res], r = list.find((x) => x.id === b.dataset.del);
-    if (!(await uiConfirm(`"${r.name || r.title || r.driver || r.team}" will be removed when you publish.`, { title: `Delete this ${s.singular}?`, ok: 'Delete', danger: true }))) return;
+    if (!(await uiConfirm(`"${r.name || r.title || r.driver || r.team}" will be removed when you publish.`, { title: `Delete This ${s.singular}?`, ok: 'Delete', danger: true }))) return;
     list.splice(list.indexOf(r), 1);
     setDirty(); toast('Deleted — publish to make it live', 'ok'); route();
   }));
@@ -859,6 +1003,10 @@ function cell(v, type) {
   if (type === 'thumb') return `<div class="thumb" ${safeUrl(v) ? `style="background-image:url('${esc(src(v))}')"` : ''}></div>`;
   if (type === 'bool') return v ? '<span class="yes">✓</span>' : '<span class="muted">—</span>';
   if (type === 'date') return esc(fmtDate(v));
+  if (type === 'results') {
+    if (!v) return '<span class="muted">—</span>';
+    return SESSIONS.filter((x) => (v[x.key] || []).length).map((x) => `<span class="pill res-pill">${x.short}</span>`).join(' ');
+  }
   if (type === 'status') return `<span class="pill ${v === 'completed' ? '' : 'pill-up'}">${esc(v || 'upcoming')}</span>`;
   const s = String(v ?? '');
   return esc(s.length > 60 ? s.slice(0, 60) + '…' : s);
@@ -892,8 +1040,9 @@ function fieldHtml(f, v) {
         <audio controls preload="none" ${val ? `src="${esc(src(val))}"` : 'hidden'}></audio></div>`;
     case 'stats': {
       const st = (v && typeof v === 'object') ? v : {};
-      return `<fieldset class="field sub-fs"><legend>${esc(f.label)}</legend><div class="stats-grid">${STAT_FIELDS.map((s) =>
-        `<label>${esc(s.label)}<input type="number" step="any" data-stat="${s.key}" value="${esc(st[s.key] ?? '')}"></label>`).join('')}</div></fieldset>`;
+      return `<fieldset class="field sub-fs"><legend>${esc(f.label)}</legend>
+        <p class="small muted">Wins, podiums, poles, points and the rest are <b>calculated automatically</b> from the race results you enter under <b>Race Schedule → Results</b>.</p>
+        <div class="stats-grid"><label>Championships won<input type="number" min="0" step="1" data-stat="championships" value="${esc(st.championships ?? '')}"></label></div></fieldset>`;
     }
     default: return `<label class="${cls}">${lab}<input type="${f.type || 'text'}" id="${id}" name="${f.k}" value="${esc(val)}" ${f.step ? `step="${f.step}"` : ''} ${f.ph ? `placeholder="${esc(f.ph)}"` : ''} ${f.req ? 'required' : ''}></label>`;
   }
@@ -970,6 +1119,7 @@ const slugify = (s) => String(s || '').toLowerCase().normalize('NFKD').replace(/
 
 function openForm(s, row) {
   const fields = s.fields();
+  closeDrawer();
   const panel = $('#drawerPanel');
   panel.innerHTML = `<form id="ef" novalidate>
     <div class="drawer-head"><h2>${row ? 'Edit' : 'New'} ${esc(s.singular)}</h2><button type="button" class="x" id="dx" aria-label="Close">×</button></div>
@@ -1002,7 +1152,11 @@ function openForm(s, row) {
     } catch (err) { toast(err.message, 'err'); }
   };
 }
-function closeDrawer() { const d = $('#drawer'); if (d) d.hidden = true; document.body.classList.remove('modal-open'); }
+function closeDrawer() {
+  const d = $('#drawer'); if (d) d.hidden = true; document.body.classList.remove('modal-open');
+  const p = $('#drawerPanel'); // reset anything the results editor attached
+  if (p) { p.classList.remove('wide'); p.oninput = p.onchange = p.onclick = p.onsubmit = null; }
+}
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
 
 // ================================================================ media
@@ -1050,7 +1204,7 @@ function mediaView(main) {
       try { const p = await adjustExisting(m.file, 'free'); if (p) { m.file = p; setDirty(); toast('Photo updated — press Publish to put it live', 'ok'); route(); } }
       catch (err) { toast(err.message, 'err'); }
     };
-    $('[data-del]', el).onclick = async () => { if (!(await uiConfirm('It will be removed from the Media page when you publish.', { title: 'Delete this photo?', ok: 'Delete', danger: true }))) return; A.data.media.splice(A.data.media.indexOf(m), 1); setDirty(); el.remove(); toast('Deleted — publish to remove it from the site', 'ok'); };
+    $('[data-del]', el).onclick = async () => { if (!(await uiConfirm('It will be removed from the Media page when you publish.', { title: 'Delete This Photo?', ok: 'Delete', danger: true }))) return; A.data.media.splice(A.data.media.indexOf(m), 1); setDirty(); el.remove(); toast('Deleted — publish to remove it from the site', 'ok'); };
     $('[data-copy]', el).onclick = (e) => navigator.clipboard?.writeText(e.target.dataset.copy).then(() => toast('Path copied — paste it into any image field', 'ok'), () => toast(e.target.dataset.copy));
   });
 }
@@ -1070,12 +1224,12 @@ async function fansView(main) {
   users.sort((a, b) => (adminSet.has(b.uid) - adminSet.has(a.uid)) || (b.created || 0) - (a.created || 0));
   main.innerHTML = `${head(SECTIONS.fans)}
     <div class="dash-cols fans-top">
-      <div class="panel"><h3>Adding an admin</h3><ol class="small checklist">
+      <div class="panel"><h3>Adding an Admin</h3><ol class="small checklist">
         <li>They open <b>Admin Console</b> (footer of the site) and choose <b>Create account</b>.</li>
         <li>Their name appears in the list below — switch on <b>Admin</b>.</li>
         <li>They reload the console and they're in.</li></ol></div>
-      <div class="panel"><h3>GitHub connection</h3><p class="small muted">Publishing goes to <b>${esc(A.gh.owner)}/${esc(A.gh.repo)}</b>. If the token expires, paste a new one here.</p>
-        <button class="btn btn-ghost btn-sm" id="newTok">Replace GitHub token</button></div>
+      <div class="panel"><h3>GitHub Connection</h3><p class="small muted">Publishing goes to <b>${esc(A.gh.owner)}/${esc(A.gh.repo)}</b>. If the token expires, paste a new one here.</p>
+        <button class="btn btn-ghost btn-sm" id="newTok">Replace GitHub Token</button></div>
     </div>
     ${users.length ? `<div class="table-wrap"><table class="adm-table"><thead><tr><th>Name</th><th>Email</th><th>Admin</th><th>Joined</th><th></th></tr></thead>
     <tbody>${users.map((u) => `<tr data-uid="${esc(u.uid)}">
@@ -1086,19 +1240,19 @@ async function fansView(main) {
       <td class="row-actions">${u.uid === me ? '' : '<button class="btn btn-sm btn-ghost danger" data-del>Remove</button>'}</td></tr>`).join('')}</tbody></table></div>`
     : '<div class="empty panel">No accounts yet.</div>'}`;
   $('#newTok').onclick = async () => {
-    if (A.dirty && !(await uiConfirm('Replacing the token reloads the console, which throws away changes you haven\'t published yet.', { title: 'Replace GitHub token?', ok: 'Continue', danger: true }))) return;
+    if (A.dirty && !(await uiConfirm('Replacing the token reloads the console, which throws away changes you haven\'t published yet.', { title: 'Replace GitHub Token?', ok: 'Continue', danger: true }))) return;
     A.dirty = false; A.data = null; githubSetup({ owner: A.gh.owner, repo: A.gh.repo, branch: A.gh.branch });
   };
   $$('tr[data-uid]', main).forEach((tr) => {
     const uid = tr.dataset.uid, name = $('b', tr).textContent;
     $('.adm-toggle', tr).onchange = async (e) => {
       const on = e.target.checked;
-      if (on && !(await uiConfirm(`${name} will be able to edit and publish the whole site.`, { title: 'Give admin access?', ok: 'Make admin' }))) { e.target.checked = false; return; }
+      if (on && !(await uiConfirm(`${name} will be able to edit and publish the whole site.`, { title: 'Give Admin Access?', ok: 'Make Admin' }))) { e.target.checked = false; return; }
       try { await Auth.setAdmin(uid, on); toast(on ? `${name} is now an admin` : `Removed admin access from ${name}`, 'ok'); }
       catch (err) { e.target.checked = !on; toast(err.message, 'err'); }
     };
     $('[data-del]', tr)?.addEventListener('click', async () => {
-      if (!(await uiConfirm(`${name} will lose admin access and be removed from this list. (Their login itself can be deleted in Firebase → Authentication.)`, { title: 'Remove this account?', ok: 'Remove', danger: true }))) return;
+      if (!(await uiConfirm(`${name} will lose admin access and be removed from this list. (Their login itself can be deleted in Firebase → Authentication.)`, { title: 'Remove This Account?', ok: 'Remove', danger: true }))) return;
       try { if (adminSet.has(uid)) await Auth.setAdmin(uid, false); await Auth.deleteUser(uid); tr.remove(); toast('Removed', 'ok'); }
       catch (err) { toast(err.message, 'err'); }
     });
