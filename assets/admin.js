@@ -87,6 +87,7 @@ const GH = {
     });
   },
   async publish(message, onStep) {
+    A.data._rev = { id: Math.random().toString(36).slice(2, 10), at: new Date().toISOString() };
     const json = JSON.stringify(A.data, null, 2) + '\n';
     onStep('Checking for changes made elsewhere…');
     let head = await GH.headSha();
@@ -111,11 +112,14 @@ const GH = {
     const jb = await GH.req(`${GH.repoPath()}/git/blobs`, { method: 'POST', body: { content: json, encoding: 'utf-8' } });
     tree.push({ path: 'data/site.json', mode: '100644', type: 'blob', sha: jb.sha });
     const removed = [...wasUsed].filter((p) => !nowUsed.has(p));
-    if (removed.length) {
-      // only delete files that really exist in the current tree
-      const full = await GH.req(`${GH.repoPath()}/git/trees/${commit.tree.sha}?recursive=1`);
-      const exists = new Set(full.tree.map((t) => t.path));
-      removed.filter((p) => exists.has(p)).forEach((path) => tree.push({ path, mode: '100644', type: 'blob', sha: null }));
+    const full = await GH.req(`${GH.repoPath()}/git/trees/${commit.tree.sha}?recursive=1`);
+    const exists = new Set(full.tree.map((t) => t.path));
+    // only delete files that really exist in the current tree
+    removed.filter((p) => exists.has(p)).forEach((path) => tree.push({ path, mode: '100644', type: 'blob', sha: null }));
+    // .nojekyll makes GitHub Pages publish the files as-is (faster, and avoids Jekyll build failures)
+    if (!exists.has('.nojekyll')) {
+      const nj = await GH.req(`${GH.repoPath()}/git/blobs`, { method: 'POST', body: { content: '', encoding: 'utf-8' } });
+      tree.push({ path: '.nojekyll', mode: '100644', type: 'blob', sha: nj.sha });
     }
     onStep('Creating commit…');
     const newTree = await GH.req(`${GH.repoPath()}/git/trees`, { method: 'POST', body: { base_tree: commit.tree.sha, tree } });
@@ -127,7 +131,7 @@ const GH = {
       throw e;
     }
     A.baseSha = newCommit.sha; A.baseText = json; A.pending.clear();
-    return { uploaded: toUpload.length, removed: removed.length };
+    return { uploaded: toUpload.length, removed: removed.length, rev: A.data._rev.id };
   },
 };
 
@@ -426,6 +430,7 @@ function shell() {
     <aside class="adm-side">
       <a class="brand" href="${esc(site)}" target="_blank" title="View site">${brandHtml()}</a>
       <nav id="side">${Object.entries(SECTIONS).map(([k, s]) => `<a href="#${k}" data-s="${k}"><i>${s.icon}</i>${s.title}</a>`).join('')}</nav>
+      <div id="liveStatus" class="live-status"></div>
       <div class="adm-user"><span class="muted small">${Gacha.enabled ? 'Signed in as' : 'Connected to'}</span><b>${esc(Gacha.enabled ? (Gacha.state.profile?.username || Gacha.state.user?.email || '') : `${A.gh.owner}/${A.gh.repo}`)}</b>
         <div class="adm-user-actions"><a class="btn btn-sm btn-ghost" href="${esc(site)}" target="_blank">View site ↗</a><button class="btn btn-sm btn-ghost" id="out">Sign out</button></div></div>
     </aside>
@@ -449,9 +454,62 @@ function shell() {
     if (!confirm('Throw away all unpublished changes?')) return;
     A.data = JSON.parse(A.baseText); normalise(A.data); A.pending.clear(); setDirty(false); applyTheme(); route();
   };
+  checkLiveOnOpen();
+  setInterval(renderLive, 1000);
   window.onhashchange = route;
   window.onbeforeunload = (e) => { if (A.dirty) { e.preventDefault(); e.returnValue = ''; } };
   route();
+}
+
+// ---------------------------------------------------------------- live-site status
+// After publishing, GitHub Pages needs to redeploy. We poll the live data file and report.
+const LIVE = { timer: null, state: 'unknown', since: 0, rev: '' };
+const ghLinks = () => ({
+  actions: `https://github.com/${encodeURIComponent(A.gh.owner)}/${encodeURIComponent(A.gh.repo)}/actions`,
+  pages: `https://github.com/${encodeURIComponent(A.gh.owner)}/${encodeURIComponent(A.gh.repo)}/settings/pages`,
+});
+async function liveRev() {
+  // admin.html lives next to index.html, so this reads exactly what visitors get
+  const r = await fetch(`data/site.json?live=${Date.now()}`, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const d = await r.json();
+  return d._rev ? d._rev.id : '';
+}
+function renderLive() {
+  const el = $('#liveStatus'); if (!el) return;
+  const secs = Math.round((Date.now() - LIVE.since) / 1000);
+  const t = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
+  const L = ghLinks();
+  el.className = `live-status ls-${LIVE.state}`;
+  el.innerHTML = {
+    unknown: '',
+    live: '<b>● Live site is up to date</b>',
+    deploying: `<b>◌ Updating live site… ${t}</b><span>GitHub Pages usually takes 1–3 minutes.</span>`,
+    stuck: `<b>⚠ Live site hasn't updated after ${t}</b><span>Your changes are saved on GitHub, but Pages hasn't deployed them. Check the <a href="${L.actions}" target="_blank" rel="noopener">Actions tab</a> for a failed "pages build and deployment" run, and that <a href="${L.pages}" target="_blank" rel="noopener">Settings → Pages</a> is set to <i>Deploy from a branch → main → / (root)</i>.</span>`,
+    offline: `<b>⚠ Couldn't read the live site</b><span>Open the console from your live site address to see deploy status.</span>`,
+  }[LIVE.state];
+}
+function watchLive(rev) {
+  clearInterval(LIVE.timer);
+  LIVE.rev = rev; LIVE.since = Date.now(); LIVE.state = 'deploying'; renderLive();
+  const tick = async () => {
+    try {
+      const now = await liveRev();
+      if (now === LIVE.rev) { LIVE.state = 'live'; clearInterval(LIVE.timer); toast('Your changes are now live on the site ✓', 'ok'); }
+      else if (Date.now() - LIVE.since > 6 * 60e3) LIVE.state = 'stuck';
+    } catch { LIVE.state = 'offline'; clearInterval(LIVE.timer); }
+    renderLive();
+  };
+  LIVE.timer = setInterval(tick, 8000);
+  setTimeout(tick, 4000);
+}
+async function checkLiveOnOpen() {
+  const repoRev = A.data._rev ? A.data._rev.id : '';
+  try {
+    const live = await liveRev();
+    if (live === repoRev) { LIVE.state = 'live'; renderLive(); }
+    else watchLive(repoRev);
+  } catch { LIVE.state = 'offline'; renderLive(); }
 }
 
 function setDirty(v = true) { A.dirty = v; const b = $('#pubBar'); if (b) b.hidden = !v; document.body.classList.toggle('has-pubbar', v); }
@@ -466,7 +524,8 @@ async function publish() {
   try {
     const r = await GH.publish(msg || 'Update site content', (s) => (btn.textContent = s));
     setDirty(false);
-    toast(`Published! The live site updates in about a minute.${r.uploaded ? ` (${r.uploaded} image${r.uploaded > 1 ? 's' : ''} uploaded)` : ''}`, 'ok');
+    toast(`Saved to GitHub${r.uploaded ? ` (${r.uploaded} file${r.uploaded > 1 ? 's' : ''} uploaded)` : ''} — the live site updates in 1–3 minutes. Watch the status in the sidebar.`, 'ok');
+    watchLive(r.rev);
     if (Gacha.enabled && packsBefore !== packsNow) await syncFirebase(true);
   } catch (e) { toast(e.message, 'err'); }
   btn.disabled = false; btn.textContent = 'Publish to site';
@@ -545,18 +604,17 @@ function settingsView(main) {
       { k: 'music_title', label: 'Track name (shown on hover, optional)', half: true }]],
     ['Packs economy', [{ k: 'starting_coins', label: 'Coins for new accounts', type: 'number', half: true }, { k: 'daily_coins', label: 'Free coins (claimable every 20 hours)', type: 'number', half: true }]],
   ];
-  main.innerHTML = `${head(SECTIONS.settings, '<button class="btn btn-primary" id="saveSettings">Apply changes</button>')}
+  main.innerHTML = `${head(SECTIONS.settings, '<span class="muted small">Changes apply as you type — press <b>Publish to site</b> when ready.</span>')}
     <form id="sf" class="settings-form">${groups.map(([t, fs]) => `<fieldset class="panel"><legend>${t}</legend><div class="fgrid">${fs.map((f) => fieldHtml(f, s[f.k])).join('')}</div></fieldset>`).join('')}</form>`;
-  wireFields($('#sf'));
+  const fields = groups.flatMap((g) => g[1]);
   const save = () => {
-    try {
-      Object.assign(A.data.settings, collect($('#sf'), groups.flatMap((g) => g[1])));
-      applyTheme(); setDirty();
-      $('.adm-side .brand').innerHTML = brandHtml();
-      toast('Applied — press Publish to put it live', 'ok');
-    } catch (e) { toast(e.message, 'err'); }
+    const vals = collect($('#sf'), fields.map((f) => ({ ...f, req: false })));
+    const before = JSON.stringify(A.data.settings);
+    Object.assign(A.data.settings, vals);
+    if (JSON.stringify(A.data.settings) !== before) { applyTheme(); setDirty(); $('.adm-side .brand').innerHTML = brandHtml(); }
   };
-  $('#saveSettings').onclick = save;
+  wireFields($('#sf'), save);
+  $('#sf').addEventListener('change', save);
   $('#sf').onsubmit = (e) => { e.preventDefault(); save(); };
 }
 
@@ -674,7 +732,7 @@ function wireFields(form, onChange) {
     const set = (path) => { input.value = path; player.hidden = !path; if (path) player.src = src(path); else player.removeAttribute('src'); clear.hidden = !path; onChange?.(); };
     $('input[type=file]', w).onchange = async (e) => {
       const file = e.target.files[0]; if (!file) return;
-      try { set(await addAudio(file)); toast('Music added — press Apply, then Publish', 'ok'); } catch (err) { toast(err.message, 'err'); }
+      try { set(await addAudio(file)); toast('Music added — press Publish to put it live', 'ok'); } catch (err) { toast(err.message, 'err'); }
       e.target.value = '';
     };
     clear.onclick = () => set('');
