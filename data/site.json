@@ -72,7 +72,7 @@
       "name": "Adam Jones",
       "role": "Deputy Team Principle",
       "nationality": "America",
-      "is_driver": true,
+      "is_driver": false,
       "hometown": "Denver, Colorado",
       "sort": 2,
       "stats": {},
@@ -81,7 +81,7 @@
     {
       "id": "m4",
       "name": "Seojun Park",
-      "role": "Team Principal",
+      "role": "Team Principle",
       "nationality": "Vietnam",
       "is_driver": false,
       "bio": "Founder and team principal.",
@@ -367,7 +367,7 @@
   ],
   "media": [],
   "_rev": {
-    "id": "4um9n018",
-    "at": "2026-11-11T22:44:05.617Z"
+    "id": "e598dheo",
+    "at": "2026-11-11T22:57:45.190Z"
   }
 }
