@@ -71,7 +71,7 @@
       "id": "m3",
       "name": "Adam Jones",
       "role": "Deputy Team Principle",
-      "nationality": "America",
+      "nationality": "USA",
       "is_driver": false,
       "hometown": "Denver, Colorado",
       "sort": 2,
@@ -87,7 +87,8 @@
       "bio": "Founder and team principal.",
       "sort": 1,
       "stats": {},
-      "photo": "uploads/2026/mwcqmfj6uxh8i.png"
+      "photo": "uploads/2026/mwcqmfj6uxh8i.png",
+      "hometown": "London, UK"
     },
     {
       "id": "m5",
@@ -119,7 +120,8 @@
       "is_driver": false,
       "photo": "uploads/2026/mwcqp482x8kqz.png",
       "stats": {},
-      "sort": 6
+      "sort": 6,
+      "nationality": "China"
     }
   ],
   "races": [
@@ -379,7 +381,7 @@
   ],
   "media": [],
   "_rev": {
-    "id": "q4qerb33",
-    "at": "2026-11-11T23:18:21.137Z"
+    "id": "df3dbul4",
+    "at": "2026-11-11T23:20:16.812Z"
   }
 }
