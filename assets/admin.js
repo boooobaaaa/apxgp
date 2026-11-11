@@ -178,6 +178,190 @@ async function addAudio(file) {
   return path;
 }
 
+// ================================================================ photo editor
+// Crop (free or fixed ratio), rotate, flip, brightness / contrast / saturation.
+// Returns a new image Blob, 'original' (keep the file as uploaded) or null (cancelled).
+const ASPECTS = [['free', 'Free'], ['orig', 'Original'], ['1:1', 'Square'], ['4:5', '4:5'], ['3:4', '3:4'], ['3:2', '3:2'], ['16:9', '16:9']];
+function loadImg(url) {
+  return new Promise((resolve, reject) => { const im = new Image(); im.onload = () => resolve(im); im.onerror = reject; im.src = url; });
+}
+async function photoEditor(url, opts = {}) {
+  let img;
+  try { img = await loadImg(url); } catch { toast('Couldn\'t open that image for editing.', 'err'); return null; }
+  try { const t = document.createElement('canvas').getContext('2d'); t.drawImage(img, 0, 0, 1, 1); t.getImageData(0, 0, 1, 1); }
+  catch { toast('That image is hosted on another website, so it can\'t be edited here. Download it and upload it instead.', 'err'); return null; }
+
+  const st = { rot: 0, flip: false, aspect: opts.aspect || 'free', b: 100, c: 100, s: 100, crop: null };
+  const keepAlpha = /png|webp|gif/i.test(opts.mime || '') || /\.(png|webp|gif)(\?|$)/i.test(url);
+  const ov = document.createElement('div');
+  ov.className = 'pe';
+  ov.innerHTML = `<div class="pe-panel" role="dialog" aria-label="Adjust photo">
+    <div class="drawer-head"><h2>Adjust photo</h2><button type="button" class="x" data-act="cancel" aria-label="Close">×</button></div>
+    <div class="pe-body">
+      <div class="pe-stage"><div class="pe-wrap"><canvas class="pe-canvas"></canvas>
+        <div class="pe-crop"><span class="pe-grid"></span><i data-h="nw"></i><i data-h="ne"></i><i data-h="sw"></i><i data-h="se"></i></div></div></div>
+      <div class="pe-side">
+        <div class="pe-group"><span class="flabel">Crop shape</span><div class="pe-chips">${ASPECTS.map(([k, l]) => `<button type="button" data-aspect="${k}">${l}</button>`).join('')}</div>
+          <p class="small muted">Drag the box to move it, drag a corner to resize.</p></div>
+        <div class="pe-group"><span class="flabel">Rotate &amp; flip</span><div class="pe-row">
+          <button type="button" class="btn btn-sm btn-ghost" data-act="rl" title="Rotate left">⟲ Left</button>
+          <button type="button" class="btn btn-sm btn-ghost" data-act="rr" title="Rotate right">⟳ Right</button>
+          <button type="button" class="btn btn-sm btn-ghost" data-act="flip" title="Mirror">⇋ Flip</button></div></div>
+        <div class="pe-group"><span class="flabel">Light &amp; colour</span>
+          ${[['b', 'Brightness'], ['c', 'Contrast'], ['s', 'Saturation']].map(([k, l]) => `<label class="pe-slider"><span>${l}<em data-v="${k}">0</em></span><input type="range" min="0" max="200" value="100" data-adj="${k}"></label>`).join('')}</div>
+        <button type="button" class="btn btn-sm btn-ghost" data-act="reset">Reset everything</button>
+      </div>
+    </div>
+    <div class="drawer-foot"><span class="pe-size small muted"></span><span class="grow"></span>
+      ${opts.allowOriginal ? '<button type="button" class="btn btn-ghost" data-act="original">Use as uploaded</button>' : ''}
+      <button type="button" class="btn btn-ghost" data-act="cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" data-act="apply">Apply</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  document.body.classList.add('modal-open');
+  const canvas = $('.pe-canvas', ov), cropEl = $('.pe-crop', ov), stage = $('.pe-stage', ov), wrap = $('.pe-wrap', ov);
+  let disp = 1; // display px per image px
+
+  const dims = () => (st.rot % 180 ? [img.naturalHeight, img.naturalWidth] : [img.naturalWidth, img.naturalHeight]);
+  const ratio = () => {
+    if (st.aspect === 'free') return null;
+    if (st.aspect === 'orig') { const [W, H] = dims(); return W / H; }
+    const [a, b] = st.aspect.split(':').map(Number); return a / b;
+  };
+  function drawOriented(ctx, scale) {
+    const [W, H] = dims();
+    ctx.save();
+    ctx.translate((W * scale) / 2, (H * scale) / 2);
+    if (st.flip) ctx.scale(-1, 1);
+    ctx.rotate((st.rot * Math.PI) / 180);
+    ctx.drawImage(img, (-img.naturalWidth * scale) / 2, (-img.naturalHeight * scale) / 2, img.naturalWidth * scale, img.naturalHeight * scale);
+    ctx.restore();
+  }
+  function fitCrop() {
+    const [W, H] = dims(), r = ratio();
+    let w = W, h = H;
+    if (r) { if (W / H > r) w = H * r; else h = W / r; }
+    st.crop = { x: (W - w) / 2, y: (H - h) / 2, w, h };
+  }
+  function redraw() {
+    const [W, H] = dims();
+    const pv = Math.min(1, 1400 / Math.max(W, H));
+    canvas.width = Math.round(W * pv); canvas.height = Math.round(H * pv);
+    drawOriented(canvas.getContext('2d'), pv);
+    layout();
+  }
+  function layout() {
+    const [W, H] = dims();
+    const sw = stage.clientWidth - 24, sh = stage.clientHeight - 24;
+    disp = Math.min(sw / W, sh / H);
+    wrap.style.width = `${W * disp}px`; wrap.style.height = `${H * disp}px`;
+    canvas.style.filter = `brightness(${st.b}%) contrast(${st.c}%) saturate(${st.s}%)`;
+    placeCrop();
+  }
+  function placeCrop() {
+    const c = st.crop;
+    Object.assign(cropEl.style, { left: `${c.x * disp}px`, top: `${c.y * disp}px`, width: `${c.w * disp}px`, height: `${c.h * disp}px` });
+    const k = Math.min(1, 2400 / Math.max(c.w, c.h));
+    $('.pe-size', ov).textContent = `${Math.round(c.w * k)} × ${Math.round(c.h * k)} px`;
+  }
+  function syncControls() {
+    $$('[data-aspect]', ov).forEach((b) => b.classList.toggle('on', b.dataset.aspect === st.aspect));
+    $$('[data-adj]', ov).forEach((i) => { i.value = st[i.dataset.adj]; $(`[data-v="${i.dataset.adj}"]`, ov).textContent = `${st[i.dataset.adj] - 100 > 0 ? '+' : ''}${st[i.dataset.adj] - 100}`; });
+  }
+
+  // ---- crop box dragging
+  let drag = null;
+  cropEl.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    const h = e.target.dataset.h, c = st.crop;
+    drag = { h, sx: e.clientX, sy: e.clientY, c0: { ...c },
+      ax: h ? (h.includes('w') ? c.x + c.w : c.x) : 0, ay: h ? (h.includes('n') ? c.y + c.h : c.y) : 0 };
+    cropEl.setPointerCapture(e.pointerId);
+  });
+  cropEl.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const [W, H] = dims();
+    if (!drag.h) {
+      const c = st.crop;
+      c.x = Math.min(Math.max(0, drag.c0.x + (e.clientX - drag.sx) / disp), W - c.w);
+      c.y = Math.min(Math.max(0, drag.c0.y + (e.clientY - drag.sy) / disp), H - c.h);
+    } else {
+      const r0 = wrap.getBoundingClientRect();
+      const px = Math.min(Math.max(0, (e.clientX - r0.left) / disp), W), py = Math.min(Math.max(0, (e.clientY - r0.top) / disp), H);
+      const min = 24 / disp, r = ratio();
+      let w = Math.max(min, Math.abs(px - drag.ax)), h = Math.max(min, Math.abs(py - drag.ay));
+      if (r) { if (w / h > r) w = h * r; else h = w / r; }
+      const left = drag.h.includes('w'), top = drag.h.includes('n');
+      // keep inside the photo
+      w = Math.min(w, left ? drag.ax : W - drag.ax); h = Math.min(h, top ? drag.ay : H - drag.ay);
+      if (r) { if (w / h > r) w = h * r; else h = w / r; }
+      st.crop = { x: left ? drag.ax - w : drag.ax, y: top ? drag.ay - h : drag.ay, w, h };
+    }
+    placeCrop();
+  });
+  const endDrag = () => { drag = null; };
+  cropEl.addEventListener('pointerup', endDrag); cropEl.addEventListener('pointercancel', endDrag);
+
+  // ---- controls
+  $$('[data-aspect]', ov).forEach((b) => (b.onclick = () => { st.aspect = b.dataset.aspect; fitCrop(); syncControls(); placeCrop(); }));
+  $$('[data-adj]', ov).forEach((i) => (i.oninput = () => { st[i.dataset.adj] = Number(i.value); syncControls(); layout(); }));
+  const onResize = () => layout();
+  window.addEventListener('resize', onResize);
+
+  return new Promise((resolve) => {
+    const done = (v) => { window.removeEventListener('resize', onResize); window.removeEventListener('keydown', onKey, true); ov.remove(); document.body.classList.remove('modal-open'); resolve(v); };
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopImmediatePropagation(); done(null); } };
+    window.addEventListener('keydown', onKey, true); // capture: don't also close the form underneath
+    ov.addEventListener('click', async (e) => {
+      const act = e.target.closest('[data-act]')?.dataset.act; if (!act) return;
+      if (act === 'cancel') return done(null);
+      if (act === 'original') return done('original');
+      if (act === 'rl' || act === 'rr') { st.rot = (st.rot + (act === 'rr' ? 90 : 270)) % 360; fitCrop(); redraw(); }
+      if (act === 'flip') { st.flip = !st.flip; redraw(); }
+      if (act === 'reset') { Object.assign(st, { rot: 0, flip: false, b: 100, c: 100, s: 100, aspect: opts.aspect || 'free' }); fitCrop(); syncControls(); redraw(); }
+      if (act === 'apply') {
+        e.target.disabled = true; e.target.textContent = 'Saving…';
+        const c = st.crop, k = Math.min(1, 2400 / Math.max(c.w, c.h));
+        const out = document.createElement('canvas');
+        out.width = Math.max(1, Math.round(c.w * k)); out.height = Math.max(1, Math.round(c.h * k));
+        const ctx = out.getContext('2d');
+        ctx.save(); ctx.scale(k, k); ctx.translate(-c.x, -c.y); drawOriented(ctx, 1); ctx.restore();
+        if (st.b !== 100 || st.c !== 100 || st.s !== 100) adjustPixels(ctx, out.width, out.height, st.b / 100, st.c / 100, st.s / 100);
+        const blob = await new Promise((r) => out.toBlob(r, keepAlpha ? 'image/png' : 'image/jpeg', 0.9));
+        done(blob);
+      }
+    });
+    fitCrop(); syncControls();
+    requestAnimationFrame(redraw);
+  });
+}
+// Same maths as CSS brightness() → contrast() → saturate(), done per pixel so it works in every browser
+function adjustPixels(ctx, w, h, br, ct, sa) {
+  const im = ctx.getImageData(0, 0, w, h), d = im.data;
+  for (let i = 0; i < d.length; i += 4) {
+    let r = d[i] * br, g = d[i + 1] * br, b = d[i + 2] * br;
+    r = (r - 128) * ct + 128; g = (g - 128) * ct + 128; b = (b - 128) * ct + 128;
+    const y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    d[i] = y + (r - y) * sa; d[i + 1] = y + (g - y) * sa; d[i + 2] = y + (b - y) * sa; // Uint8Clamped clamps 0–255
+  }
+  ctx.putImageData(im, 0, 0);
+}
+// Pick → adjust → store. Used by image fields, the media library and "Insert image".
+async function pickAndAdjust(file, aspect) {
+  const tmp = URL.createObjectURL(file);
+  try {
+    const res = await photoEditor(tmp, { aspect, allowOriginal: true, mime: file.type });
+    if (!res) return null;
+    if (res === 'original') return addImage(file);
+    return addImage(new File([res], file.name.replace(/\.[^.]+$/, '') + (res.type === 'image/png' ? '.png' : '.jpg'), { type: res.type }));
+  } finally { URL.revokeObjectURL(tmp); }
+}
+async function adjustExisting(path, aspect) {
+  const res = await photoEditor(src(path), { aspect });
+  if (!res || res === 'original') return null;
+  return addImage(new File([res], `edited${res.type === 'image/png' ? '.png' : '.jpg'}`, { type: res.type }));
+}
+
 // ================================================================ sections
 const SECTIONS = {
   dashboard: { title: 'Dashboard', icon: '◧' },
@@ -192,7 +376,7 @@ const SECTIONS = {
       { k: 'is_driver', label: 'This person is a driver', type: 'check' },
       { k: 'number', label: 'Car number', half: true }, { k: 'sort', label: 'Sort order', type: 'number', half: true },
       { k: 'nationality', label: 'Nationality', half: true }, { k: 'hometown', label: 'Hometown', half: true },
-      { k: 'birthdate', label: 'Date of birth', type: 'date', half: true }, { k: 'photo', label: 'Photo', type: 'image' },
+      { k: 'birthdate', label: 'Date of birth', type: 'date', half: true }, { k: 'photo', label: 'Photo', type: 'image', aspect: '4:5' },
       { k: 'instagram', label: 'Instagram URL', half: true }, { k: 'twitter', label: 'X / Twitter URL', half: true },
       { k: 'bio', label: 'Biography', type: 'markdown', rows: 8 },
       { k: 'stats', label: 'Driver stats (used on profile + Compare)', type: 'stats' },
@@ -240,14 +424,14 @@ const SECTIONS = {
     cols: [['cover', 'thumb'], ['title'], ['published', 'Live', 'bool'], ['published_at', 'Date', 'date'], ['author']],
     fields: () => [
       { k: 'title', label: 'Headline', req: true }, { k: 'excerpt', label: 'Summary (shown on cards)', type: 'textarea', rows: 2 },
-      { k: 'cover', label: 'Cover image', type: 'image' },
+      { k: 'cover', label: 'Cover image', type: 'image', aspect: '16:9' },
       { k: 'body', label: 'Article body', type: 'markdown', rows: 14, uploadInsert: true },
       { k: 'author', label: 'Author', half: true }, { k: 'published_at', label: 'Publish date', type: 'datetime-local', half: true },
       { k: 'slug', label: 'URL slug (auto-generated if blank)', half: true },
       { k: 'published', label: 'Published (visible on site)', type: 'check' },
     ],
   },
-  media: { title: 'Media library', icon: '🖼', help: 'Add photos for the Media page. Group them with albums — the site shows album filters automatically. Large photos are resized automatically.' },
+  media: { title: 'Media library', icon: '🖼', help: 'Add photos for the Media page, then use ✎ Adjust to crop, rotate or brighten any of them. Group photos with albums — the site shows album filters automatically.' },
   fans: { title: 'Admins', icon: '👥', help: 'Who can sign in to this console, and the GitHub connection used for publishing.' },
 };
 
@@ -257,7 +441,7 @@ const SECTIONS = {
 //    checks /admins in Firestore, then uses the GitHub token stored once in /secrets/github.
 //  • No Firebase yet: fall back to pasting a GitHub token directly.
 const authShell = (inner) => `<div class="admin-auth"><div class="auth-card wide">
-  <div class="brand"><img src="brand/apx-gp-logo.png" alt="" class="adm-logo"><span>Admin</span></div>${inner}
+  <div class="brand"><img src="brand/apx-gp-logo.png" alt="" class="adm-logo theme-logo"><span>Admin</span></div>${inner}
   <p class="small center back-link"><a class="muted" href="./">← Back to site</a></p></div></div>`;
 const loadingScreen = (msg = '') => { root.innerHTML = `<div class="admin-auth"><div class="center-col"><div class="loading"><span></span></div><p class="muted small">${esc(msg)}</p></div></div>`; };
 
@@ -400,10 +584,25 @@ function applyTheme() {
   const r = document.documentElement.style, s = A.data.settings;
   r.setProperty('--accent', s.primary_color || '#857452');
   r.setProperty('--accent-2', s.secondary_color || '#c9b98f');
-  if (s.background_color) r.setProperty('--bg', s.background_color);
+  if (s.background_color) r.setProperty('--bg-dark', s.background_color);
+}
+const ICON_SUN = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></g></svg>';
+const ICON_MOON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z" fill="currentColor"/></svg>';
+const isLight = () => document.documentElement.dataset.theme === 'light';
+function themeBtnHtml() { return `<button class="theme-btn" id="themeBtn" type="button" title="Switch to ${isLight() ? 'dark' : 'light'} mode" aria-label="Switch to ${isLight() ? 'dark' : 'light'} mode">${isLight() ? ICON_MOON : ICON_SUN}</button>`; }
+function wireThemeBtn() {
+  const b = $('#themeBtn'); if (!b) return;
+  b.onclick = () => {
+    document.documentElement.dataset.theme = isLight() ? 'dark' : 'light';
+    try { localStorage.setItem('apx_theme', JSON.stringify(document.documentElement.dataset.theme)); } catch { /* ignore */ }
+    b.outerHTML = themeBtnHtml(); wireThemeBtn();
+    const brand = $('.adm-side .brand'); if (brand && A.data) brand.innerHTML = brandHtml();
+  };
 }
 const brandHtml = () => safeUrl(A.data.settings.logo)
-  ? `<img src="${esc(src(A.data.settings.logo))}" alt="" class="adm-logo">`
+  ? (isLight() && safeUrl(A.data.settings.logo_light)
+    ? `<img src="${esc(src(A.data.settings.logo_light))}" alt="" class="adm-logo">`
+    : `<img src="${esc(src(A.data.settings.logo))}" alt="" class="adm-logo theme-logo">`)
   : `<span class="brand-mark">${esc((A.data.settings.short_name || 'T')[0])}</span><span>${esc(A.data.settings.short_name)}</span>`;
 
 function shell() {
@@ -415,7 +614,7 @@ function shell() {
       <nav id="side">${Object.entries(SECTIONS).map(([k, s]) => `<a href="#${k}" data-s="${k}"><i>${s.icon}</i>${s.title}</a>`).join('')}</nav>
       <div id="liveStatus" class="live-status"></div>
       <div class="adm-user"><span class="muted small">${Auth.enabled ? 'Signed in as' : 'Connected to'}</span><b>${esc(Auth.enabled ? (Auth.state.profile?.username || Auth.state.user?.email || '') : `${A.gh.owner}/${A.gh.repo}`)}</b>
-        <div class="adm-user-actions"><a class="btn btn-sm btn-ghost" href="${esc(site)}" target="_blank">View site ↗</a><button class="btn btn-sm btn-ghost" id="out">Sign out</button></div></div>
+        <div class="adm-user-actions"><a class="btn btn-sm btn-ghost" href="${esc(site)}" target="_blank">View site ↗</a><button class="btn btn-sm btn-ghost" id="out">Sign out</button>${themeBtnHtml()}</div></div>
     </aside>
     <main class="adm-main" id="main"></main>
     <div class="publish-bar" id="pubBar" hidden>
@@ -437,6 +636,7 @@ function shell() {
     if (!confirm('Throw away all unpublished changes?')) return;
     A.data = JSON.parse(A.baseText); normalise(A.data); A.pending.clear(); setDirty(false); applyTheme(); route();
   };
+  wireThemeBtn();
   checkLiveOnOpen();
   setInterval(renderLive, 1000);
   window.onhashchange = route;
@@ -564,7 +764,9 @@ function settingsView(main) {
       { k: 'tagline', label: 'Tagline' },
       { k: 'primary_color', label: 'Accent colour (buttons, highlights)', type: 'color', half: true }, { k: 'secondary_color', label: 'Secondary accent (best stats, progress)', type: 'color', half: true },
       { k: 'background_color', label: 'Background colour (panels are derived from it)', type: 'color', half: true }]],
-    ['Images', [{ k: 'logo', label: 'Logo (white/transparent works best)', type: 'image' }, { k: 'hero_image', label: 'Home page hero image', type: 'image' }]],
+    ['Images', [{ k: 'logo', label: 'Logo (white on transparent works best)', type: 'image' },
+      { k: 'logo_light', label: 'Logo for light mode (optional — if empty, the logo is darkened automatically)', type: 'image' },
+      { k: 'hero_image', label: 'Home page hero image', type: 'image', aspect: '16:9' }]],
     ['About', [{ k: 'about', label: 'About the team (home page)', type: 'markdown', rows: 6 }]],
     ['Social links', [{ k: 'instagram', label: 'Instagram URL', half: true }, { k: 'twitter', label: 'X / Twitter URL', half: true }, { k: 'youtube', label: 'YouTube URL', half: true }, { k: 'twitch', label: 'Twitch URL', half: true }]],
     ['Background music', [{ k: 'music_file', label: 'Music file (loops on the site; visitors can mute it)', type: 'audio' },
@@ -635,9 +837,10 @@ function fieldHtml(f, v) {
     case 'check': return `<label class="${cls}"><input type="checkbox" id="${id}" name="${f.k}" ${val === true || Number(val) ? 'checked' : ''}> ${lab}</label>`;
     case 'select': return `<label class="${cls}">${lab}<select id="${id}" name="${f.k}">${f.opts.map(([o, l]) => `<option value="${esc(o)}" ${String(o) === String(val ?? '') ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
     case 'color': return `<label class="${cls}">${lab}<div class="color-row"><input type="color" id="${id}" name="${f.k}" value="${esc(val || '#857452')}"><code>${esc(val)}</code></div></label>`;
-    case 'image': return `<div class="${cls} img-field" data-k="${f.k}"><span class="flabel">${lab}</span>
+    case 'image': return `<div class="${cls} img-field" data-k="${f.k}" data-aspect="${esc(f.aspect || 'free')}"><span class="flabel">${lab}</span>
         <div class="img-row"><div class="img-prev" ${safeUrl(val) ? `style="background-image:url('${esc(src(val))}')"` : ''}>${val ? '' : '<span>No image</span>'}</div>
         <div class="img-ctrls"><label class="btn btn-sm btn-ghost">Choose image<input type="file" accept="image/*" hidden></label>
+          <button type="button" class="btn btn-sm btn-ghost" data-adjust ${val ? '' : 'hidden'}>✎ Adjust</button>
           <button type="button" class="btn btn-sm btn-ghost danger" data-clear ${val ? '' : 'hidden'}>Remove</button>
           <input type="text" name="${f.k}" value="${esc(val)}" placeholder="…or paste an image URL"></div></div></div>`;
     case 'audio': return `<div class="${cls} audio-field img-field-like"><span class="flabel">${lab}</span>
@@ -656,17 +859,19 @@ function fieldHtml(f, v) {
 
 function wireFields(form, onChange) {
   $$('.img-field', form).forEach((w) => {
-    const input = $('input[type=text]', w), prev = $('.img-prev', w), clear = $('[data-clear]', w);
+    const input = $('input[type=text]', w), prev = $('.img-prev', w), clear = $('[data-clear]', w), adj = $('[data-adjust]', w);
+    const aspect = w.dataset.aspect || 'free';
     const set = (path) => {
       input.value = path;
       prev.style.backgroundImage = safeUrl(path) ? `url('${src(path)}')` : '';
-      prev.innerHTML = path ? '' : '<span>No image</span>'; clear.hidden = !path; onChange?.();
+      prev.innerHTML = path ? '' : '<span>No image</span>'; clear.hidden = !path; adj.hidden = !path; onChange?.();
     };
     $('input[type=file]', w).onchange = async (e) => {
-      const file = e.target.files[0]; if (!file) return;
-      prev.innerHTML = '<span>Processing…</span>';
-      try { set(await addImage(file)); } catch (err) { toast(err.message, 'err'); set(input.value); }
-      e.target.value = '';
+      const file = e.target.files[0]; e.target.value = ''; if (!file) return;
+      try { const p = await pickAndAdjust(file, aspect); if (p) set(p); } catch (err) { toast(err.message, 'err'); }
+    };
+    adj.onclick = async () => {
+      try { const p = await adjustExisting(input.value, 'free'); if (p) { set(p); toast('Photo updated', 'ok'); } } catch (err) { toast(err.message, 'err'); }
     };
     clear.onclick = () => set('');
     input.oninput = () => set(input.value.trim());
@@ -693,7 +898,8 @@ function wireFields(form, onChange) {
   $$('[data-insert]', form).forEach((inp) => (inp.onchange = async () => {
     const file = inp.files[0]; if (!file) return;
     try {
-      const path = await addImage(file), ta = $('#' + inp.dataset.insert, form);
+      const path = await pickAndAdjust(file, 'free'); if (!path) { inp.value = ''; return; }
+      const ta = $('#' + inp.dataset.insert, form);
       const pos = ta.selectionStart ?? ta.value.length;
       ta.value = ta.value.slice(0, pos) + `\n\n![](${path})\n\n` + ta.value.slice(pos);
       toast('Image inserted', 'ok');
@@ -771,7 +977,7 @@ function mediaView(main) {
     <img src="${esc(src(m.file))}" alt="" loading="lazy">
     <input data-f="caption" value="${esc(m.caption || '')}" placeholder="Caption">
     <input data-f="album" value="${esc(m.album || '')}" placeholder="Album" list="albums">
-    <div class="adm-m-actions"><button class="btn btn-sm btn-ghost" data-copy="${esc(m.file)}">Copy path</button><button class="btn btn-sm btn-ghost danger" data-del>Delete</button></div>
+    <div class="adm-m-actions"><button class="btn btn-sm btn-ghost" data-adj>✎ Adjust</button><button class="btn btn-sm btn-ghost" data-copy="${esc(m.file)}">Copy path</button><button class="btn btn-sm btn-ghost danger" data-del>Delete</button></div>
   </div>`).join('') || '<p class="muted">No photos yet.</p>'}</div>`;
 
   const add = async (files) => {
@@ -798,6 +1004,10 @@ function mediaView(main) {
   $$('.adm-m').forEach((el) => {
     const m = A.data.media.find((x) => x.id === el.dataset.id);
     $$('input[data-f]', el).forEach((i) => (i.onchange = () => { const v = i.value.trim(); if (v) m[i.dataset.f] = v; else delete m[i.dataset.f]; setDirty(); }));
+    $('[data-adj]', el).onclick = async () => {
+      try { const p = await adjustExisting(m.file, 'free'); if (p) { m.file = p; setDirty(); toast('Photo updated — press Publish to put it live', 'ok'); route(); } }
+      catch (err) { toast(err.message, 'err'); }
+    };
     $('[data-del]', el).onclick = () => { if (!confirm('Delete this photo?')) return; A.data.media.splice(A.data.media.indexOf(m), 1); setDirty(); el.remove(); toast('Deleted — publish to remove it from the site', 'ok'); };
     $('[data-copy]', el).onclick = (e) => navigator.clipboard?.writeText(e.target.dataset.copy).then(() => toast('Path copied — paste it into any image field', 'ok'), () => toast(e.target.dataset.copy));
   });

@@ -41,9 +41,6 @@ async function boot() {
   renderAccount();
   initSearch();
   initMusic();
-  // Signed-in admins get an "Admin console" shortcut in the header
-  Auth.onChange(renderAccount);
-  Auth.init();
   $('#burger').addEventListener('click', () => document.body.classList.toggle('menu-open'));
   window.addEventListener('scroll', () => $('#nav').classList.toggle('scrolled', scrollY > 10), { passive: true });
   window.addEventListener('hashchange', router);
@@ -54,26 +51,44 @@ function applyTheme() {
   const s = S.settings, r = document.documentElement.style;
   r.setProperty('--accent', s.primary_color || '#857452');
   r.setProperty('--accent-2', s.secondary_color || '#c9b98f');
-  if (s.background_color) r.setProperty('--bg', s.background_color);
+  if (s.background_color) r.setProperty('--bg-dark', s.background_color);
   document.title = s.team_name || 'Team';
   const logo = safeUrl(s.logo);
   $('#brand').classList.toggle('logo-only', !!logo);
   $('#brand').innerHTML = logo
-    ? `<img src="${esc(logo)}" alt="${esc(s.team_name)}"><span>${esc(s.short_name || s.team_name)}</span>`
+    ? `${logoImg(s.team_name)}<span>${esc(s.short_name || s.team_name)}</span>`
     : `<span class="brand-mark">${esc((s.short_name || s.team_name || 'T').slice(0, 1))}</span><span>${esc(s.short_name || s.team_name)}</span>`;
   const socials = ['instagram', 'twitter', 'youtube', 'twitch'].filter((k) => safeUrl(s[k]))
     .map((k) => `<a href="${esc(s[k])}" target="_blank" rel="noopener">${k === 'twitter' ? 'X / Twitter' : k[0].toUpperCase() + k.slice(1)}</a>`).join('');
   $('#footer').innerHTML = `<div class="wrap footer-inner">
-    <div>${logo ? `<img class="footer-logo" src="${esc(logo)}" alt="">` : ''}<div class="footer-brand">${esc(s.team_name)}</div><div class="muted">${esc(s.tagline)}</div></div>
+    <div>${logo ? logoImg('', 'footer-logo') : ''}<div class="footer-brand">${esc(s.team_name)}</div><div class="muted">${esc(s.tagline)}</div></div>
     <div class="footer-links">${socials}</div>
-    <div class="muted small footer-meta">© ${new Date().getFullYear()} ${esc(s.team_name)} · <a href="admin.html" class="footer-admin">Admin Console</a></div></div>`;
+    <div class="muted small footer-meta">© ${new Date().getFullYear()} ${esc(s.team_name)}</div></div>`;
 }
 
+// ------------------------------------------------------------------ header buttons: light/dark + admin console
+const ICON_SUN = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/></g></svg>';
+const ICON_MOON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z" fill="currentColor"/></svg>';
+const theme = () => document.documentElement.dataset.theme === 'light' ? 'light' : 'dark';
+// Logo <img> that swaps to the light-mode logo (or is darkened) in light mode
+function logoImg(alt = '', cls = '') {
+  const s = S.settings, light = safeUrl(s.logo_light);
+  const src = theme() === 'light' && light ? light : s.logo;
+  return `<img class="theme-logo ${light ? 'has-light' : ''} ${cls}" src="${esc(src)}" data-dark="${esc(s.logo)}" data-light="${esc(light || s.logo)}" alt="${esc(alt)}">`;
+}
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  store.set('apx_theme', t);
+  $$('img.theme-logo').forEach((im) => (im.src = t === 'light' ? im.dataset.light : im.dataset.dark));
+  renderAccount();
+}
 function renderAccount() {
-  const el = $('#navAccount'), mob = $('#navMobileAcct');
-  const isAdmin = !!(Auth.state && Auth.state.user && Auth.state.isAdmin);
-  el.innerHTML = isAdmin ? '<a href="admin.html" class="btn btn-sm btn-primary admin-btn">Admin console</a>' : '';
-  mob.innerHTML = isAdmin ? '<a href="admin.html">Admin console</a>' : '';
+  const light = theme() === 'light';
+  $('#navAccount').innerHTML = `
+    <button class="theme-btn" id="themeBtn" aria-label="Switch to ${light ? 'dark' : 'light'} mode" title="Switch to ${light ? 'dark' : 'light'} mode">${light ? ICON_MOON : ICON_SUN}</button>
+    <a href="admin.html" class="btn btn-sm btn-primary admin-btn">Admin Console</a>`;
+  $('#navMobileAcct').innerHTML = '';
+  $('#themeBtn').onclick = () => setTheme(light ? 'dark' : 'light');
 }
 
 // ------------------------------------------------------------------ router
@@ -135,7 +150,7 @@ async function home() {
     <div class="wrap hero-inner">
       <div class="eyebrow">Season ${esc(s.season)}</div>
       ${safeUrl(s.logo)
-        ? `<h1 class="hero-logo"><img src="${esc(s.logo)}" alt="${esc(s.team_name)}"></h1><div class="hero-fullname">${esc(s.team_name)}</div>`
+        ? `<h1 class="hero-logo">${logoImg(s.team_name)}</h1><div class="hero-fullname">${esc(s.team_name)}</div>`
         : `<h1 class="hero-title">${esc(s.team_name)}</h1>`}
       <p class="hero-tag">${esc(s.tagline)}</p>
       <div class="hero-cta">
@@ -267,7 +282,7 @@ async function team(args) {
   app.innerHTML = `${pageHead('The people behind the car', 'Our Team')}
   <section class="section team-section">
     <div class="wrap toolbar center">
-      <div class="tabs">${[['all', 'Everyone'], ['drivers', 'Drivers'], ['crew', 'Team & crew']].map(([k, l]) => `<button class="tab" data-f="${k}">${l}</button>`).join('')}</div>
+      <div class="tabs">${[['all', 'Everyone'], ['drivers', 'Drivers'], ['crew', 'Trackside']].map(([k, l]) => `<button class="tab" data-f="${k}">${l}</button>`).join('')}</div>
     </div>
     <div class="carousel" id="carousel">
       <button class="car-arrow prev" aria-label="Previous">‹</button>
