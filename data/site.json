@@ -16,7 +16,8 @@
     "twitch": "",
     "music_file": "uploads/audio/mwcote8j4amiq.mp3",
     "music_volume": 20,
-    "music_title": "Lose My Mind - Don Toliver"
+    "music_title": "Lose My Mind - Don Toliver",
+    "logo_light": "uploads/2026/mwcvugln163k8.png"
   },
   "members": [
     {
@@ -255,8 +256,8 @@
   ],
   "media": [],
   "_rev": {
-    "id": "evgvj0s9",
-    "at": "2026-11-12T01:41:10.226Z"
+    "id": "hmk73b6b",
+    "at": "2026-11-12T01:42:14.909Z"
   },
   "points": {
     "race": [
