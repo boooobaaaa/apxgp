@@ -221,132 +221,6 @@
       "status": "upcoming"
     }
   ],
-  "drivers": [
-    {
-      "id": "d1",
-      "pos": 1,
-      "driver": "L. Fontaine",
-      "team": "Vertex Motorsport",
-      "points": 168,
-      "is_ours": false
-    },
-    {
-      "id": "d2",
-      "pos": 2,
-      "driver": "Alex Mercer",
-      "team": "APX GP",
-      "points": 151,
-      "is_ours": true
-    },
-    {
-      "id": "d3",
-      "pos": 3,
-      "driver": "R. Lindqvist",
-      "team": "Ironclad GP",
-      "points": 139,
-      "is_ours": false
-    },
-    {
-      "id": "d4",
-      "pos": 4,
-      "driver": "Mateo Ruiz",
-      "team": "APX GP",
-      "points": 118,
-      "is_ours": true
-    },
-    {
-      "id": "d5",
-      "pos": 5,
-      "driver": "D. Kowalski",
-      "team": "Vertex Motorsport",
-      "points": 104,
-      "is_ours": false
-    },
-    {
-      "id": "d6",
-      "pos": 6,
-      "driver": "T. Haddad",
-      "team": "Solstice F1",
-      "points": 92,
-      "is_ours": false
-    },
-    {
-      "id": "d7",
-      "pos": 7,
-      "driver": "E. Moreau",
-      "team": "Ironclad GP",
-      "points": 77,
-      "is_ours": false
-    },
-    {
-      "id": "d8",
-      "pos": 8,
-      "driver": "J. Park",
-      "team": "Kestrel Racing",
-      "points": 54,
-      "is_ours": false
-    },
-    {
-      "id": "d9",
-      "pos": 9,
-      "driver": "N. Costa",
-      "team": "Solstice F1",
-      "points": 41,
-      "is_ours": false
-    },
-    {
-      "id": "d10",
-      "pos": 10,
-      "driver": "O. Brandt",
-      "team": "Apex Dynamics",
-      "points": 22,
-      "is_ours": false
-    }
-  ],
-  "constructors": [
-    {
-      "id": "t1",
-      "pos": 1,
-      "team": "Vertex Motorsport",
-      "points": 272,
-      "is_ours": false
-    },
-    {
-      "id": "t2",
-      "pos": 2,
-      "team": "APX GP",
-      "points": 269,
-      "is_ours": true
-    },
-    {
-      "id": "t3",
-      "pos": 3,
-      "team": "Ironclad GP",
-      "points": 216,
-      "is_ours": false
-    },
-    {
-      "id": "t4",
-      "pos": 4,
-      "team": "Solstice F1",
-      "points": 133,
-      "is_ours": false
-    },
-    {
-      "id": "t5",
-      "pos": 5,
-      "team": "Kestrel Racing",
-      "points": 54,
-      "is_ours": false
-    },
-    {
-      "id": "t6",
-      "pos": 6,
-      "team": "Apex Dynamics",
-      "points": 22,
-      "is_ours": false
-    }
-  ],
   "news": [
     {
       "id": "n1",
@@ -381,7 +255,135 @@
   ],
   "media": [],
   "_rev": {
-    "id": "df3dbul4",
-    "at": "2026-11-11T23:20:16.812Z"
+    "id": "vb271bi8",
+    "at": "2026-11-12T01:40:50.500Z"
+  },
+  "points": {
+    "race": [
+      25,
+      18,
+      15,
+      12,
+      10,
+      8,
+      6,
+      4,
+      2,
+      1
+    ],
+    "sprint": [
+      8,
+      7,
+      6,
+      5,
+      4,
+      3,
+      2,
+      1
+    ],
+    "fl_race": 1,
+    "fl_sprint": 0,
+    "fl_top": 10
+  },
+  "grid": {
+    "teams": [
+      {
+        "id": "tmmwct5obnju7b",
+        "name": "LM Performance F1"
+      },
+      {
+        "id": "tmmwct5obnxh4f",
+        "name": "Expensify APX GP Mercedes",
+        "is_ours": true
+      },
+      {
+        "id": "tmmwct5obne28a",
+        "name": "Vanguard Sabre Motorsport"
+      },
+      {
+        "id": "tmmwct5obniwvm",
+        "name": "GlitchGP F1 Team"
+      },
+      {
+        "id": "tmmwct5obna32k",
+        "name": "Oscar Mayer Cadillac"
+      },
+      {
+        "id": "tmmwct5obnl273",
+        "name": "Tarigy's Motorsport Team Formula 1"
+      },
+      {
+        "id": "tmmwcvrusk7qeb",
+        "name": "Tohago Mobile Oracle Racing"
+      },
+      {
+        "id": "tmmwcvrv7u73ok",
+        "name": "BMW Sauber F1 Team"
+      },
+      {
+        "id": "tmmwcvrvggs5i4",
+        "name": "Carti Racing Association F1"
+      },
+      {
+        "id": "tmmwcvsfqhejl3",
+        "name": "Ducati Minardi Formula 1 Team"
+      },
+      {
+        "id": "tmmwcvsg0o4myh",
+        "name": "Acura Factory Team"
+      }
+    ],
+    "drivers": [
+      {
+        "id": "drmwct5obn806a",
+        "name": "L. Fontaine",
+        "team_id": "tmmwct5obnju7b"
+      },
+      {
+        "id": "drmwct5obn9sb0",
+        "name": "Alex Mercer",
+        "team_id": "tmmwct5obnxh4f"
+      },
+      {
+        "id": "drmwct5obneqy2",
+        "name": "R. Lindqvist",
+        "team_id": "tmmwct5obne28a"
+      },
+      {
+        "id": "drmwct5obnt9tf",
+        "name": "Mateo Ruiz",
+        "team_id": "tmmwct5obnxh4f"
+      },
+      {
+        "id": "drmwct5obnh9j4",
+        "name": "D. Kowalski",
+        "team_id": "tmmwct5obnju7b"
+      },
+      {
+        "id": "drmwct5obnt5hk",
+        "name": "T. Haddad",
+        "team_id": "tmmwct5obniwvm"
+      },
+      {
+        "id": "drmwct5obnnqdb",
+        "name": "E. Moreau",
+        "team_id": "tmmwct5obne28a"
+      },
+      {
+        "id": "drmwct5obnyfey",
+        "name": "J. Park",
+        "team_id": "tmmwct5obna32k"
+      },
+      {
+        "id": "drmwct5obniow4",
+        "name": "N. Costa",
+        "team_id": "tmmwct5obniwvm"
+      },
+      {
+        "id": "drmwct5obniiwi",
+        "name": "O. Brandt",
+        "team_id": "tmmwct5obnl273"
+      }
+    ]
   }
 }
