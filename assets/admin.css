@@ -227,3 +227,31 @@ code { background: var(--bg); padding: 1px 6px; border-radius: 4px; font-size: .
 .ui-dialog-box.wide { width: min(620px, 100%); }
 .ui-dialog-box textarea { margin: 0 0 18px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .88rem; }
 .back-site { white-space: nowrap; }
+
+/* ===== Drivers & Teams / Points System ===== */
+.grid-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); gap: 16px; align-items: start; margin-bottom: 14px; }
+@media (max-width: 1250px) { .grid-cols { grid-template-columns: minmax(0, 1fr); } }
+.grid-cols .panel { min-width: 0; overflow-x: auto; }
+.grid-table { width: 100%; table-layout: fixed; }
+.grid-table input:not([type=checkbox]), .grid-table select { width: 100%; min-width: 0; }
+.grid-table th:nth-last-child(2), .grid-table td:nth-last-child(2) { width: 52px; }
+.grid-table th:last-child, .grid-table td:last-child { width: 48px; }
+.grid-table tr[data-t] td:nth-child(2), .grid-table thead th:nth-child(2) { width: 92px; }
+.grid-table tr[data-d] td:nth-child(2) { width: 72px; }
+.grid-table tr[data-d] td:nth-child(3) { width: 40%; }
+.grid-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.grid-head h3 { margin: 0; }
+.grid-table td { padding: 6px 6px; }
+.grid-table input:not([type=checkbox]), .grid-table select { margin: 0; padding: 7px 9px; font-size: .9rem; }
+.grid-table .num-in { text-align: center; }
+.grid-table .num { text-align: right; }
+.pts-fs { margin: 0 0 16px; }
+.pts-fs legend { font-weight: 900; text-transform: uppercase; font-style: italic; padding: 0 8px; }
+.pts-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 8px; }
+@media (max-width: 900px) { .pts-grid { grid-template-columns: repeat(5, 1fr); } }
+.pts-grid label { margin: 0; font-size: .75rem; color: var(--muted); text-align: center; }
+.pts-grid input { margin-top: 4px; text-align: center; padding: 8px 4px; font-weight: 700; }
+.pts-fs small { display: block; margin-top: 4px; font-weight: 400; }
+.pts-example { margin-top: -4px; }
+.fl-mini { display: block; font-size: .62rem; color: #b27cf0; font-weight: 800; }
+.res-table select { width: 100%; }

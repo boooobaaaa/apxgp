@@ -78,6 +78,7 @@ const GH = {
     });
   },
   async publish(message, onStep) {
+    migrateData(A.data); // keep names in results in step with Drivers & Teams
     A.data._rev = { id: Math.random().toString(36).slice(2, 10), at: new Date().toISOString() };
     const json = JSON.stringify(A.data, null, 2) + '\n';
     onStep('Checking for changes made elsewhere…');
@@ -129,9 +130,10 @@ const GH = {
 // Fill in missing collections / defaults so older or hand-edited files still work
 function normalise(d) {
   d.settings = d.settings || {};
-  for (const k of ['members', 'races', 'drivers', 'constructors', 'news', 'media']) d[k] = Array.isArray(d[k]) ? d[k] : [];
+  for (const k of ['members', 'races', 'news', 'media']) d[k] = Array.isArray(d[k]) ? d[k] : [];
   // card packs were removed from the site — tidy away their old data
   delete d.cards; delete d.packs; delete d.settings.starting_coins; delete d.settings.daily_coins;
+  migrateData(d); // roster (Drivers & Teams) + points system; standings are now calculated
 }
 
 // ================================================================ images
@@ -174,9 +176,14 @@ async function addAudio(file) {
 
 // ================================================================ race results editor
 function lastName(n) { const p = String(n || '').trim().split(/\s+/); return p.length > 1 ? p[p.length - 1] : p[0] || ''; }
+function ourDriverSet() {
+  const g = A.data.grid, ourTeams = new Set(g.teams.filter((t) => t.is_ours).map((t) => t.id));
+  return new Set([...A.data.members.filter((m) => m.is_driver).map((m) => normName(m.name)),
+    ...g.drivers.filter((d) => ourTeams.has(d.team_id)).map((d) => normName(d.name))]);
+}
 function raceSummary(race) {
   const rows = race.results?.race || [];
-  const ours = new Set(A.data.members.filter((m) => m.is_driver).map((m) => normName(m.name)));
+  const ours = ourDriverSet();
   return rows.map((r, i) => ({ r, i })).filter(({ r }) => ours.has(normName(r.d)))
     .map(({ r, i }) => `${(r.st || 'fin') === 'fin' ? `P${i + 1}` : STATUS[r.st]} ${lastName(r.d)}`).join(' · ');
 }
@@ -202,14 +209,39 @@ function openResults(race) {
   let hasSprint = !!race.has_sprint;
   const sessions = () => SESSIONS.filter((s) => !s.sprint || hasSprint);
   let cur = [...sessions()].reverse().find((s) => (work[s.key] || []).length)?.key || (hasSprint ? 'sprint_quali' : 'quali');
-  const ourSet = () => new Set(A.data.members.filter((m) => m.is_driver).map((m) => normName(m.name)));
-
-  // names/teams we already know about, for suggestions and auto-filling the team
-  const known = new Map();
-  A.data.drivers.forEach((d) => known.set(normName(d.driver), { d: d.driver, t: d.team || '' }));
-  A.data.races.forEach((r) => Object.values(r.results || {}).forEach((rows) => rows.forEach((x) => { if (x.d) known.set(normName(x.d), { d: x.d, t: x.t || known.get(normName(x.d))?.t || '' }); })));
-  A.data.members.filter((m) => m.is_driver).forEach((m) => { const k = normName(m.name); if (!known.has(k) || !known.get(k).t) known.set(k, { d: m.name, t: A.data.settings.short_name || '' }); });
-  const teams = [...new Set([...A.data.constructors.map((c) => c.team), ...[...known.values()].map((k) => k.t)].filter(Boolean))];
+  const G = A.data.grid;
+  const teamById = (id) => G.teams.find((t) => t.id === id);
+  const driverById = (id) => G.drivers.find((d) => d.id === id);
+  const driverByName = (n) => G.drivers.find((d) => normName(d.name) === normName(n));
+  const teamByName = (n) => G.teams.find((t) => normName(t.name) === normName(n));
+  // older rows saved before the roster existed: link them to roster entries by name
+  for (const rows of Object.values(work)) for (const x of rows) {
+    if (!x.di && x.d) { const d = driverByName(x.d); if (d) x.di = d.id; }
+    if (!x.ti && x.t) { const t = teamByName(x.t); if (t) x.ti = t.id; }
+  }
+  const setDriver = (x, id) => { const d = driverById(id); if (!d) { delete x.di; delete x.d; return; } x.di = d.id; x.d = d.name; const t = teamById(d.team_id); if (t) { x.ti = t.id; x.t = t.name; } };
+  const setTeam = (x, id) => { const t = teamById(id); if (t) { x.ti = t.id; x.t = t.name; } else { delete x.ti; delete x.t; } };
+  // find a roster driver by name, adding them (and their team) to Drivers & Teams if they're new
+  const ensureDriver = (name, teamName) => {
+    let d = driverByName(name);
+    if (!d) {
+      let t = teamName ? teamByName(teamName) : null;
+      if (!t && teamName) { t = { id: gid('tm'), name: teamName }; G.teams.push(t); }
+      d = { id: gid('dr'), name, ...(t ? { team_id: t.id } : {}) }; G.drivers.push(d); addedToRoster++;
+    }
+    return d;
+  };
+  let addedToRoster = 0;
+  const ourSet = () => ourDriverSet();
+  const driverOptions = (sel, legacy) => {
+    const groups = G.teams.map((t) => [t, G.drivers.filter((d) => d.team_id === t.id)]).filter(([, ds]) => ds.length);
+    const loose = G.drivers.filter((d) => !teamById(d.team_id));
+    const opt = (d) => `<option value="${esc(d.id)}" ${d.id === sel ? 'selected' : ''}>${esc(d.name)}${d.number ? ` #${esc(d.number)}` : ''}</option>`;
+    return `<option value="">— Choose Driver —</option>${legacy ? `<option value="" selected>${esc(legacy)} (not in Drivers &amp; Teams)</option>` : ''}
+      ${groups.map(([t, ds]) => `<optgroup label="${esc(t.name)}">${ds.map(opt).join('')}</optgroup>`).join('')}
+      ${loose.length ? `<optgroup label="No team">${loose.map(opt).join('')}</optgroup>` : ''}`;
+  };
+  const teamOptions = (sel, legacy) => `<option value="">— Team —</option>${legacy ? `<option value="" selected>${esc(legacy)}</option>` : ''}${G.teams.map((t) => `<option value="${esc(t.id)}" ${t.id === sel ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}`;
 
   const panel = $('#drawerPanel');
   panel.classList.add('wide');
@@ -223,7 +255,7 @@ function openResults(race) {
         <div class="tabs res-tabs">${sessions().map((s) => `<button type="button" class="tab" data-s="${s.key}" aria-selected="${s.key === cur}">${s.label}${(work[s.key] || []).length ? ` <small>${work[s.key].length}</small>` : ''}</button>`).join('')}</div>
         <div class="res-tools">
           ${others.length ? `<select id="copyFrom"><option value="">Copy Order From…</option>${others.map((s) => `<option value="${s.key}">${s.label}</option>`).join('')}</select>` : ''}
-          ${A.data.drivers.length ? '<button type="button" class="btn btn-sm btn-ghost" data-a="standings">Fill From Standings</button>' : ''}
+          ${G.drivers.length ? '<button type="button" class="btn btn-sm btn-ghost" data-a="standings">Fill With All Drivers</button>' : ''}
           <button type="button" class="btn btn-sm btn-ghost" data-a="paste">Paste a List</button>
           ${rows.length ? '<button type="button" class="btn btn-sm btn-ghost danger" data-a="clear">Clear Session</button>' : ''}
         </div>
@@ -233,20 +265,18 @@ function openResults(race) {
             const mine = ours.has(normName(x.d));
             return `<tr data-i="${i}" class="${mine ? 'mine' : ''}">
               <td class="pos">${i + 1}</td>
-              <td><input data-f="d" value="${esc(x.d || '')}" list="dl-drivers" placeholder="Driver name"></td>
-              <td><input data-f="t" value="${esc(x.t || '')}" list="dl-teams" placeholder="Team"></td>
+              <td><select data-f="di">${driverOptions(x.di, !x.di && x.d ? x.d : '')}</select></td>
+              <td><select data-f="ti">${teamOptions(x.ti, !x.ti && x.t ? x.t : '')}</select></td>
               <td><input data-f="time" value="${esc(x.time || '')}" placeholder="${isRace ? (i ? '+5.123' : '1:32:14.221') : '1:29.708'}" class="mono"></td>
               ${isRace ? `<td><select data-f="st">${Object.entries(STATUS).map(([k, l]) => `<option value="${k}" ${(x.st || 'fin') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td>` : ''}
               <td class="ty-cell">${mine ? `<span class="ty-set">${[...String(x.ty || '')].map((c, k) => `<button type="button" class="tyre t-${c}" data-rmty="${k}" title="Remove ${TYRES[c]?.[0] || c}">${c}</button>`).join('')}</span>
                 <span class="ty-add">${Object.entries(TYRES).map(([c, [name]]) => `<button type="button" class="tyre-add t-${c}" data-addty="${c}" title="Add a ${name} stint">${c}</button>`).join('')}</span>` : '<span class="muted">—</span>'}</td>
-              ${isRace ? `<td><input type="radio" name="fl" data-fl ${x.fl ? 'checked' : ''} title="Fastest lap"></td><td class="pts">${rowPoints(cur, i + 1, x, A.data.settings) || ''}</td>` : ''}
+              ${isRace ? `<td><input type="radio" name="fl" data-fl ${x.fl ? 'checked' : ''} title="Fastest lap"></td><td class="pts">${rowPoints(cur, i + 1, x, A.data.points) || ''}${flBonus(cur, i + 1, x, A.data.points) ? '<small class="fl-mini">+FL</small>' : ''}</td>` : ''}
               <td class="row-actions"><button type="button" class="btn btn-sm btn-ghost" data-mv="-1" ${i ? '' : 'disabled'} title="Move up">↑</button><button type="button" class="btn btn-sm btn-ghost" data-mv="1" ${i < rows.length - 1 ? '' : 'disabled'} title="Move down">↓</button><button type="button" class="btn btn-sm btn-ghost danger" data-a="del" title="Remove">✕</button></td>
             </tr>`;
-          }).join('')}</tbody></table></div>` : `<div class="empty panel small">No ${esc(S2.label)} results yet. Add drivers one by one, paste a list, ${A.data.drivers.length ? 'fill from the standings' : ''}${others.length ? ' or copy the order from another session' : ''}.</div>`}
+          }).join('')}</tbody></table></div>` : `<div class="empty panel small">No ${esc(S2.label)} results yet. Add drivers one by one, paste a list${G.drivers.length ? ', fill with all drivers' : ''}${others.length ? ' or copy the order from another session' : ''}.${G.drivers.length ? '' : ' <br>Tip: add your grid under <a href="#grid">Drivers &amp; Teams</a> first.'}</div>`}
         <button type="button" class="btn btn-ghost btn-sm add-row" data-a="add">+ Add Driver</button>
-        <p class="small muted res-help">Put drivers in finishing order (use ↑ ↓ to adjust). Points use F1 scoring — Grand Prix 25-18-15-12-10-8-6-4-2-1, Sprint 8-7-6-5-4-3-2-1 — and drivers marked DNF/DNS/DSQ score nothing. Saving updates every driver's stats automatically.</p>
-        <datalist id="dl-drivers">${[...known.values()].map((k) => `<option value="${esc(k.d)}">`).join('')}</datalist>
-        <datalist id="dl-teams">${teams.map((t) => `<option value="${esc(t)}">`).join('')}</datalist>
+        <p class="small muted res-help">Put drivers in finishing order (use ↑ ↓ to adjust). Points come from your <a href="#points">Points System</a>${Number(A.data.points.fl_race) || Number(A.data.points.fl_sprint) ? `, including the fastest-lap bonus (+${A.data.points.fl_race}${Number(A.data.points.fl_top) ? `, top ${A.data.points.fl_top} only` : ''})` : ''}. Drivers marked DNF/DNS/DSQ score nothing. Saving updates the standings and every driver's stats automatically.</p>
       </div>
       <div class="drawer-foot"><span class="grow"></span><button type="button" class="btn btn-ghost" data-a="close">Cancel</button><button class="btn btn-primary">Save Results</button></div>
     </form>`;
@@ -255,21 +285,20 @@ function openResults(race) {
 
   panel.oninput = (e) => {
     const tr = e.target.closest('tr[data-i]'), f = e.target.dataset.f;
-    if (tr && f && f !== 'st') { const x = rowsNow()[Number(tr.dataset.i)]; if (e.target.value.trim()) x[f] = e.target.value; else delete x[f]; }
+    if (tr && f === 'time') { const x = rowsNow()[Number(tr.dataset.i)]; if (e.target.value.trim()) x.time = e.target.value; else delete x.time; }
   };
   panel.onchange = (e) => {
     const tr = e.target.closest('tr[data-i]');
     if (e.target.id === 'spr') { hasSprint = e.target.checked; if (!sessions().some((s) => s.key === cur)) cur = 'quali'; return render(); }
     if (e.target.id === 'copyFrom' && e.target.value) {
-      work[cur] = (work[e.target.value] || []).map((x) => ({ d: x.d, ...(x.t ? { t: x.t } : {}) }));
+      work[cur] = (work[e.target.value] || []).map((x) => ({ d: x.d, ...(x.di ? { di: x.di } : {}), ...(x.t ? { t: x.t } : {}), ...(x.ti ? { ti: x.ti } : {}) }));
       toast(`Copied the order from ${SESSIONS.find((s) => s.key === e.target.value).label} — now adjust it`, 'ok'); return render();
     }
     if (!tr) return;
     const x = rowsNow()[Number(tr.dataset.i)];
     if (e.target.dataset.f === 'st') { if (e.target.value === 'fin') delete x.st; else x.st = e.target.value; return render(); }
-    if (e.target.dataset.f === 'd') { // fill the team in for drivers we know
-      const k = known.get(normName(x.d)); if (k && !x.t && k.t) x.t = k.t; if (k) x.d = k.d; return render();
-    }
+    if (e.target.dataset.f === 'di') { setDriver(x, e.target.value); return render(); } // team follows the driver
+    if (e.target.dataset.f === 'ti') { setTeam(x, e.target.value); return render(); }
     if (e.target.matches('[data-fl]')) { rowsNow().forEach((r) => delete r.fl); x.fl = true; return render(); }
   };
   panel.onclick = async (e) => {
@@ -282,20 +311,25 @@ function openResults(race) {
     switch (b.dataset.a) {
       case 'close': return closeDrawer();
       case 'del': rows.splice(i, 1); return render();
-      case 'add': rows.push({ d: '' }); render(); $$('#rf tr[data-i] input[data-f="d"]').pop()?.focus(); return;
+      case 'add': rows.push({}); render(); $$('#rf tr[data-i] select[data-f="di"]').pop()?.focus(); return;
       case 'clear': if (await uiConfirm(`All ${SESSIONS.find((s) => s.key === cur).label} rows will be removed.`, { title: 'Clear This Session?', ok: 'Clear', danger: true })) { work[cur] = []; render(); } return;
       case 'standings':
-        work[cur] = [...A.data.drivers].sort((a, b) => (a.pos || 99) - (b.pos || 99)).map((d) => ({ d: d.driver, ...(d.team ? { t: d.team } : {}) }));
-        toast('Filled with every driver from the standings — now put them in finishing order', 'ok'); return render();
+        work[cur] = computeStandings(A.data).drivers.map((s) => driverByName(s.driver)).filter(Boolean).map((d) => { const x = {}; setDriver(x, d.id); return x; });
+        toast('Filled with every driver (in championship order) — now put them in finishing order', 'ok'); return render();
       case 'paste': {
         const txt = await textDialog('Paste a List', 'One driver per line, in finishing order. You can add the team and time after commas or tabs (straight from a spreadsheet works), e.g. "Alex Mercer, APX GP, 1:29.708". Position numbers at the start are ignored.', '1. Alex Mercer, APX GP, 1:29.708\n2. L. Fontaine, Vertex Motorsport, +0.142\n3. Mateo Ruiz');
         if (!txt) return;
         const add = txt.split(/\r?\n/).map((l) => l.replace(/^\s*(P?\d+)[.):\-\s]+/i, '').trim()).filter(Boolean).map((l) => {
           const [d, t, time] = l.split(/\t|,|;/).map((p) => p.trim());
-          const k = known.get(normName(d));
-          return { d: k ? k.d : d, ...(t || k?.t ? { t: t || k.t } : {}), ...(time ? { time } : {}) };
+          const dr = ensureDriver(d, t), x = {}; setDriver(x, dr.id);
+          if (t) { const tm = teamByName(t); if (tm) setTeam(x, tm.id); }
+          if (time) x.time = time;
+          return x;
         });
-        work[cur] = rows.filter((r) => r.d).concat(add); toast(`Added ${add.length} drivers`, 'ok'); return render();
+        work[cur] = rows.filter((r) => r.di || r.d).concat(add);
+        toast(`Added ${add.length} drivers${addedToRoster ? ` (${addedToRoster} new name${addedToRoster > 1 ? 's were' : ' was'} added to Drivers & Teams)` : ''}`, 'ok');
+        if (addedToRoster) setDirty();
+        addedToRoster = 0; return render();
       }
     }
   };
@@ -303,7 +337,7 @@ function openResults(race) {
     e.preventDefault();
     const clean = {};
     for (const s of sessions()) {
-      const rows = (work[s.key] || []).filter((x) => x.d && x.d.trim()).map((x) => ({ ...x, d: x.d.trim() }));
+      const rows = (work[s.key] || []).filter((x) => x.di || (x.d && x.d.trim())).map((x) => ({ ...x, d: String(x.d || '').trim() }));
       if (rows.length) clean[s.key] = rows;
     }
     if (Object.keys(clean).length) race.results = clean; else delete race.results;
@@ -576,28 +610,8 @@ const SECTIONS = {
       { k: 'result', label: 'Result summary', ph: 'P1 Mercer · P4 Ruiz' },
     ],
   },
-  drivers: {
-    title: "Drivers' Standings", icon: '🏆', res: 'drivers', singular: 'Driver Entry', idp: 'd', standings: true,
-    help: 'Tick "Our team" on your drivers — they get highlighted on the Standings page.',
-    sort: (a, b) => (a.pos || 99) - (b.pos || 99),
-    cols: [['pos', 'Pos'], ['driver'], ['team'], ['points', 'Pts'], ['is_ours', 'Our team', 'bool']],
-    fields: () => [
-      { k: 'driver', label: 'Driver', req: true }, { k: 'team', label: 'Team' },
-      { k: 'pos', label: 'Position', type: 'number', half: true }, { k: 'points', label: 'Points', type: 'number', step: 'any', half: true },
-      { k: 'is_ours', label: 'Our team (highlight)', type: 'check' },
-    ],
-  },
-  constructors: {
-    title: "Constructors' Standings", icon: '🏭', res: 'constructors', singular: 'Team Entry', idp: 't', standings: true,
-    help: 'Tick "Our team" on your constructor entry to highlight it.',
-    sort: (a, b) => (a.pos || 99) - (b.pos || 99),
-    cols: [['pos', 'Pos'], ['team'], ['points', 'Pts'], ['is_ours', 'Our team', 'bool']],
-    fields: () => [
-      { k: 'team', label: 'Team', req: true },
-      { k: 'pos', label: 'Position', type: 'number', half: true }, { k: 'points', label: 'Points', type: 'number', step: 'any', half: true },
-      { k: 'is_ours', label: 'Our team (highlight)', type: 'check' },
-    ],
-  },
+  grid: { title: 'Drivers & Teams', icon: '🏎', help: 'Every team and driver on the grid. These names fill the dropdowns when you enter race results — the championship standings are calculated from those results automatically.' },
+  points: { title: 'Points System', icon: '🔢', help: 'How many points each finishing position is worth, plus the fastest-lap bonus. Changes recalculate the standings and every driver\'s stats instantly.' },
   news: {
     title: 'News', icon: '📰', res: 'news', singular: 'Article', idp: 'n',
     help: 'Drafts stay hidden on the site. Tick Published to put an article live. Body formatting: ## headings, **bold**, *italic*, - lists, > quotes, [links](https://…) and images via "Insert image".',
@@ -901,12 +915,15 @@ function route() {
   $$('#side a').forEach((a) => a.classList.toggle('on', a.dataset.s === A.section));
   closeDrawer();
   const main = $('#main');
+  main.oninput = main.onchange = main.onclick = null;
   try {
     const s = SECTIONS[A.section];
     if (A.section === 'dashboard') dashboard(main);
     else if (A.section === 'settings') settingsView(main);
     else if (A.section === 'media') mediaView(main);
     else if (A.section === 'fans') fansView(main);
+    else if (A.section === 'grid') gridView(main);
+    else if (A.section === 'points') pointsView(main);
     else listView(main, s);
   } catch (e) { console.error(e); main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
 }
@@ -927,7 +944,7 @@ function dashboard(main) {
       <button class="btn btn-primary" data-go="news">Write an Article</button>
       <a class="btn btn-ghost" href="#media">Add Photos</a>
       <a class="btn btn-ghost" href="#races">Enter Race Results</a>
-      <a class="btn btn-ghost" href="#drivers">Update Standings</a>
+      <a class="btn btn-ghost" href="#grid">Drivers &amp; Teams</a>
     </div></div>
     <div class="panel"><h3>How Publishing Works</h3><ol class="small checklist">
       <li>Make as many edits as you like — they're kept in this browser tab.</li>
@@ -953,7 +970,6 @@ function settingsView(main) {
       { k: 'hero_image', label: 'Home page hero image', type: 'image', aspect: '16:9' }]],
     ['About', [{ k: 'about', label: 'About the team (home page)', type: 'markdown', rows: 6 }]],
     ['Social Links', [{ k: 'instagram', label: 'Instagram URL', half: true }, { k: 'twitter', label: 'X / Twitter URL', half: true }, { k: 'youtube', label: 'YouTube URL', half: true }, { k: 'twitch', label: 'Twitch URL', half: true }]],
-    ['Race Scoring', [{ k: 'fastest_lap_point', label: 'Award 1 bonus point for the fastest lap (top-10 finishers)', type: 'check' }]],
     ['Background Music', [{ k: 'music_file', label: 'Music file (loops on the site; visitors can mute it)', type: 'audio' },
       { k: 'music_volume', label: 'Volume (0–100)', type: 'number', half: true, def: 35 },
       { k: 'music_title', label: 'Track name (shown on hover, optional)', half: true }]],
@@ -1207,6 +1223,105 @@ function mediaView(main) {
     $('[data-del]', el).onclick = async () => { if (!(await uiConfirm('It will be removed from the Media page when you publish.', { title: 'Delete This Photo?', ok: 'Delete', danger: true }))) return; A.data.media.splice(A.data.media.indexOf(m), 1); setDirty(); el.remove(); toast('Deleted — publish to remove it from the site', 'ok'); };
     $('[data-copy]', el).onclick = (e) => navigator.clipboard?.writeText(e.target.dataset.copy).then(() => toast('Path copied — paste it into any image field', 'ok'), () => toast(e.target.dataset.copy));
   });
+}
+
+// ================================================================ Drivers & Teams (roster)
+function gridView(main) {
+  const G = A.data.grid;
+  const standings = computeStandings(A.data);
+  const ptsOf = (name, kind) => (kind === 'd' ? standings.drivers.find((x) => normName(x.driver) === normName(name)) : standings.constructors.find((x) => normName(x.team) === normName(name)))?.points || 0;
+  main.innerHTML = `${head(SECTIONS.grid)}
+  <div class="grid-cols">
+    <div class="panel">
+      <div class="grid-head"><h3>Teams <span class="muted small">(${G.teams.length})</span></h3><button class="btn btn-sm btn-primary" data-a="addTeam">+ Add Team</button></div>
+      ${G.teams.length ? `<table class="adm-table grid-table"><thead><tr><th>Team Name</th><th>Our Team</th><th class="num">Pts</th><th></th></tr></thead><tbody>
+        ${G.teams.map((t) => `<tr data-t="${esc(t.id)}">
+          <td><input data-f="name" value="${esc(t.name)}" placeholder="Team name"></td>
+          <td><label class="switch sm"><input type="checkbox" data-f="is_ours" ${t.is_ours ? 'checked' : ''}><span class="switch-ui"></span></label></td>
+          <td class="num muted">${ptsOf(t.name, 't')}</td>
+          <td class="row-actions"><button class="btn btn-sm btn-ghost danger" data-a="delTeam" title="Remove team">✕</button></td></tr>`).join('')}
+      </tbody></table>` : '<p class="muted small">No teams yet.</p>'}
+    </div>
+    <div class="panel">
+      <div class="grid-head"><h3>Drivers <span class="muted small">(${G.drivers.length})</span></h3><button class="btn btn-sm btn-primary" data-a="addDriver">+ Add Driver</button></div>
+      ${G.drivers.length ? `<table class="adm-table grid-table"><thead><tr><th>Driver Name</th><th>No.</th><th>Team</th><th class="num">Pts</th><th></th></tr></thead><tbody>
+        ${G.drivers.map((d) => `<tr data-d="${esc(d.id)}">
+          <td><input data-f="name" value="${esc(d.name)}" placeholder="Driver name"></td>
+          <td><input data-f="number" value="${esc(d.number || '')}" class="num-in" placeholder="#"></td>
+          <td><select data-f="team_id"><option value="">— No team —</option>${G.teams.map((t) => `<option value="${esc(t.id)}" ${t.id === d.team_id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select></td>
+          <td class="num muted">${ptsOf(d.name, 'd')}</td>
+          <td class="row-actions"><button class="btn btn-sm btn-ghost danger" data-a="delDriver" title="Remove driver">✕</button></td></tr>`).join('')}
+      </tbody></table>` : '<p class="muted small">No drivers yet.</p>'}
+    </div>
+  </div>
+  <p class="small muted">Points shown here are calculated from race results using your <a href="#points">Points System</a>. Renaming a driver or team updates their name in every result. Removing someone from this list keeps them in past results and the standings.</p>`;
+
+  main.oninput = (e) => {
+    const tr = e.target.closest('tr'), f = e.target.dataset.f; if (!tr || !f || e.target.type === 'checkbox' || e.target.tagName === 'SELECT') return;
+    const item = tr.dataset.t ? G.teams.find((t) => t.id === tr.dataset.t) : G.drivers.find((d) => d.id === tr.dataset.d);
+    const v = e.target.value.trim(); if (v) item[f] = v; else if (f !== 'name') delete item[f];
+    setDirty();
+  };
+  main.onchange = (e) => {
+    const tr = e.target.closest('tr'), f = e.target.dataset.f; if (!tr || !f) return;
+    if (tr.dataset.t && f === 'is_ours') { const t = G.teams.find((x) => x.id === tr.dataset.t); if (e.target.checked) t.is_ours = true; else delete t.is_ours; }
+    if (tr.dataset.d && f === 'team_id') { const d = G.drivers.find((x) => x.id === tr.dataset.d); if (e.target.value) d.team_id = e.target.value; else delete d.team_id; }
+    if (f === 'name') migrateData(A.data); // carry the new name into saved results
+    setDirty();
+    if (f !== 'name') gridView(main);
+  };
+  main.onclick = async (e) => {
+    const b = e.target.closest('[data-a]'); if (!b) return;
+    const tr = b.closest('tr');
+    if (b.dataset.a === 'addTeam') { G.teams.push({ id: gid('tm'), name: '' }); setDirty(); gridView(main); $$('tr[data-t] input[data-f="name"]', main).pop().focus(); }
+    if (b.dataset.a === 'addDriver') { G.drivers.push({ id: gid('dr'), name: '' }); setDirty(); gridView(main); $$('tr[data-d] input[data-f="name"]', main).pop().focus(); }
+    if (b.dataset.a === 'delTeam') {
+      const t = G.teams.find((x) => x.id === tr.dataset.t), n = G.drivers.filter((d) => d.team_id === t.id).length;
+      if (!(await uiConfirm(`${t.name || 'This team'} will be removed from the list${n ? ` and its ${n} driver${n > 1 ? 's' : ''} will be left without a team` : ''}. Past results keep the team name.`, { title: 'Remove Team?', ok: 'Remove', danger: true }))) return;
+      G.teams.splice(G.teams.indexOf(t), 1); G.drivers.forEach((d) => { if (d.team_id === t.id) delete d.team_id; }); setDirty(); gridView(main);
+    }
+    if (b.dataset.a === 'delDriver') {
+      const d = G.drivers.find((x) => x.id === tr.dataset.d);
+      if (!(await uiConfirm(`${d.name || 'This driver'} will be removed from the list. Their past results stay as they are.`, { title: 'Remove Driver?', ok: 'Remove', danger: true }))) return;
+      G.drivers.splice(G.drivers.indexOf(d), 1); setDirty(); gridView(main);
+    }
+  };
+}
+
+// ================================================================ Points System
+function pointsView(main) {
+  const P = A.data.points;
+  const row = (key, label, n) => `<fieldset class="panel pts-fs"><legend>${label}</legend>
+    <div class="pts-grid">${Array.from({ length: n }, (_, i) => `<label><span>P${i + 1}</span><input type="number" min="0" step="any" data-k="${key}" data-i="${i}" value="${esc(P[key][i] ?? '')}" placeholder="0"></label>`).join('')}</div></fieldset>`;
+  main.innerHTML = `${head(SECTIONS.points, '<button class="btn btn-ghost" data-a="reset">Reset to F1 Defaults</button>')}
+    ${row('race', 'Grand Prix — Points per Position', 20)}
+    ${row('sprint', 'Sprint — Points per Position', 20)}
+    <fieldset class="panel pts-fs"><legend>Fastest Lap Bonus</legend>
+      <div class="fgrid">
+        <label class="field half">Bonus points — Grand Prix<input type="number" min="0" step="any" data-x="fl_race" value="${esc(P.fl_race ?? 0)}"></label>
+        <label class="field half">Bonus points — Sprint<input type="number" min="0" step="any" data-x="fl_sprint" value="${esc(P.fl_sprint ?? 0)}"></label>
+        <label class="field half">Only if they finish in the top…<input type="number" min="0" step="1" data-x="fl_top" value="${esc(P.fl_top ?? 0)}"><small class="muted">Use 0 to award it to any finisher.</small></label>
+      </div>
+      <p class="small muted">Mark the fastest lap with the ⏱ column when entering results. The bonus is added to that driver's points, their team's points and the standings.</p>
+    </fieldset>
+    <p class="small muted pts-example" id="ptsEx"></p>`;
+  const example = () => {
+    const win = rowPoints('race', 1, { fl: true }, P), ten = rowPoints('race', 10, { fl: true }, P), eleven = rowPoints('race', 11, { fl: true }, P);
+    $('#ptsEx').textContent = `Example: a Grand Prix win with the fastest lap scores ${win} points; P10 with fastest lap scores ${ten}; P11 with fastest lap scores ${eleven}.`;
+  };
+  const trim = (a) => { const out = [...a]; while (out.length && !Number(out[out.length - 1])) out.pop(); return out; };
+  main.oninput = (e) => {
+    const t = e.target;
+    if (t.dataset.k) { const arr = [...P[t.dataset.k]]; while (arr.length < 20) arr.push(0); arr[Number(t.dataset.i)] = t.value === '' ? 0 : Number(t.value); P[t.dataset.k] = trim(arr); }
+    if (t.dataset.x) P[t.dataset.x] = t.value === '' ? 0 : Number(t.value);
+    setDirty(); example();
+  };
+  main.onclick = async (e) => {
+    if (e.target.closest('[data-a="reset"]') && await uiConfirm('Grand Prix 25-18-15-12-10-8-6-4-2-1, Sprint 8-7-6-5-4-3-2-1, and +1 for the fastest lap in the Grand Prix (top 10 only).', { title: 'Reset to F1 Defaults?', ok: 'Reset' })) {
+      A.data.points = JSON.parse(JSON.stringify(DEFAULT_POINTS)); setDirty(); pointsView(main);
+    }
+  };
+  example();
 }
 
 // ================================================================ admins (Firebase)

@@ -12,10 +12,10 @@ const DATA = {
   members: () => [...(D().members || [])].sort((a, b) => (Number(a.sort) || 0) - (Number(b.sort) || 0)),
   member: (id) => (D().members || []).find((m) => m.id === id),
   races: () => D().races || [],
-  standings: () => ({
-    drivers: [...(D().drivers || [])].sort((a, b) => (a.pos || 99) - (b.pos || 99)),
-    constructors: [...(D().constructors || [])].sort((a, b) => (a.pos || 99) - (b.pos || 99)),
-  }),
+  // calculated from the race results + the points system (see common.js)
+  standings: () => (S._standings ||= computeStandings(D())),
+  started: () => anyResults(D()),
+  points: () => D().points || DEFAULT_POINTS,
   news: () => (D().news || []).filter((n) => isOn(n.published)).sort((a, b) => String(b.published_at || '').localeCompare(String(a.published_at || ''))),
   media: () => D().media || [],
 };
@@ -26,12 +26,12 @@ const store = {
 };
 
 // Driver stats are calculated from the race results entered in the admin console
-const driverStats = (m) => ({ ...computeStats(DATA.races(), m.name, S.settings), championships: m.stats?.championships });
+const driverStats = (m) => ({ ...computeStats(DATA.races(), m.name, DATA.points()), championships: m.stats?.championships });
 
 // ------------------------------------------------------------------ boot
 async function boot() {
   try {
-    S.data = await fetchJson(`data/site.json?v=${Date.now()}`);
+    S.data = migrateData(await fetchJson(`data/site.json?v=${Date.now()}`));
     S.settings = S.data.settings || {}; S.statFields = STAT_FIELDS;
   } catch (e) { app.innerHTML = `<div class="wrap empty">Couldn't load the site content. ${esc(e.message)}</div>`; return; }
   applyTheme();
@@ -138,8 +138,9 @@ async function home() {
   const s = S.settings;
   const drivers = members.filter((m) => m.is_driver);
   const next = nextRace(races);
-  const ourTeam = standings.constructors.find((c) => c.is_ours);
-  const ourDrivers = standings.drivers.filter((d) => d.is_ours);
+  const started = DATA.started();
+  const ourTeam = started && standings.constructors.find((c) => c.is_ours);
+  const ourDrivers = started ? standings.drivers.filter((d) => d.is_ours) : [];
   const last = [...races].filter((r) => r.status === 'completed').sort((a, b) => raceTime(b) - raceTime(a))[0];
   const hero = safeUrl(s.hero_image);
 
@@ -168,12 +169,12 @@ async function home() {
     </div>
     <div class="panel">
       <div class="panel-label">Constructors' championship</div>
-      ${ourTeam ? `<div class="big-pos">P${esc(ourTeam.pos)}</div><div class="muted">${esc(ourTeam.points)} pts</div>` : '<div class="muted">Standings coming soon</div>'}
+      ${ourTeam ? `<div class="big-pos">P${esc(ourTeam.pos)}</div><div class="muted">${esc(ourTeam.points)} pts</div>` : '<div class="muted">Standings appear after the first race</div>'}
       <a class="link-arrow" href="#/schedule?tab=constructors">Full standings</a>
     </div>
     <div class="panel">
       <div class="panel-label">Drivers' championship</div>
-      ${ourDrivers.length ? ourDrivers.map((d) => `<div class="mini-row"><span class="mini-pos">P${esc(d.pos)}</span><span>${esc(d.driver)}</span><b>${esc(d.points)}</b></div>`).join('') : '<div class="muted">Standings coming soon</div>'}
+      ${ourDrivers.length ? ourDrivers.map((d) => `<div class="mini-row"><span class="mini-pos">P${esc(d.pos)}</span><span>${esc(d.driver)}</span><b>${esc(d.points)}</b></div>`).join('') : '<div class="muted">Standings appear after the first race</div>'}
       ${last ? `<div class="last-result"><span class="panel-label">Last race · ${esc(last.name)}</span><div>${esc(last.result || '—')}</div></div>` : ''}
     </div>
   </section>
@@ -223,11 +224,12 @@ async function schedule(_args, params) {
 
   const standingsTable = (rows, kind) => {
     const max = Math.max(1, ...rows.map((r) => Number(r.points) || 0));
-    if (!rows.length) return '<div class="empty small">No standings published yet.</div>';
-    return `<div class="table-wrap"><table class="standings">
+    if (!rows.length) return '<div class="empty small">No drivers or teams have been added yet.</div>';
+    const started = DATA.started();
+    return `${started ? '' : '<p class="muted small standings-note">The season hasn\'t started yet — the championship fills in automatically as race results are added.</p>'}<div class="table-wrap"><table class="standings">
       <thead><tr><th>Pos</th><th>${kind === 'drivers' ? 'Driver' : 'Team'}</th>${kind === 'drivers' ? '<th class="hide-sm">Team</th>' : ''}<th class="num">Pts</th><th class="hide-sm bar-col"></th></tr></thead>
       <tbody>${rows.map((r) => `<tr class="${r.is_ours ? 'ours' : ''}">
-        <td class="pos">${esc(r.pos)}</td>
+        <td class="pos">${started ? esc(r.pos) : '–'}</td>
         <td class="name">${esc(kind === 'drivers' ? r.driver : r.team)}${r.is_ours ? '<span class="ours-tag">Our team</span>' : ''}</td>
         ${kind === 'drivers' ? `<td class="hide-sm muted">${esc(r.team || '')}</td>` : ''}
         <td class="num"><b>${esc(r.points)}</b></td>
@@ -252,7 +254,7 @@ async function schedule(_args, params) {
           <div class="race-date">${d ? `<b>${d.getDate()}</b><span>${d.toLocaleDateString(undefined, { month: 'short' })}</span>` : '<b>TBC</b>'}</div>
           <div class="race-round">R${esc(r.round || '–')}</div>
           <div class="race-main"><h3>${esc(r.name)}</h3><div class="muted small">${esc([r.circuit, r.country].filter(Boolean).join(' · '))}${r.time && !done ? ` · ${esc(r.time)}` : ''}</div></div>
-          <div class="race-status">${done ? `<span class="pill">Completed</span>${r.result ? `<div class="race-result">${esc(r.result)}</div>` : ''}` : isNext ? `<span class="pill pill-live">Next race</span>${countdownHtml(r)}` : `<span class="pill pill-up">Upcoming</span>`}${res ? '<div class="race-link">Full results →</div>' : ''}</div>
+          <div class="race-status">${done ? `<span class="pill">Completed</span>${r.result ? `<div class="race-result">${esc(r.result)}</div>` : ''}${(() => { const f = (r.results?.race || []).find((x) => x.fl); return f ? `<div class="race-fl">⏱ Fastest lap: ${esc(f.d)}</div>` : ''; })()}` : isNext ? `<span class="pill pill-live">Next race</span>${countdownHtml(r)}` : `<span class="pill pill-up">Upcoming</span>`}${res ? '<div class="race-link">Full results →</div>' : ''}</div>
         </${res ? 'a' : 'div'}>`;
       }).join('')}</div>` : '<div class="empty">The calendar hasn\'t been published yet.</div>'}
     </div>
@@ -280,7 +282,9 @@ async function race(args, params) {
   const sess = sessionsFor(r).filter((s) => (r.results?.[s.key] || []).length);
   if (!sess.length) throw new Error('Results for this race haven\'t been added yet.');
   let cur = params.get('s') && sess.some((s) => s.key === params.get('s')) ? params.get('s') : sess[sess.length - 1].key;
-  const ours = new Set(DATA.members().filter((m) => m.is_driver).map((m) => normName(m.name)));
+  const ours = new Set([...DATA.members().filter((m) => m.is_driver).map((m) => normName(m.name)),
+    ...D().grid.drivers.filter((d) => D().grid.teams.find((t) => t.id === d.team_id)?.is_ours).map((d) => normName(d.name))]);
+  const P = DATA.points();
   const highlight = store.get('highlightOurs', true);
   app.innerHTML = `${pageHead(`Round ${esc(r.round || '–')} · ${esc(fmtDate(r.date, { day: 'numeric', month: 'long', year: 'numeric' }))}`, esc(r.name), esc([r.circuit, r.country].filter(Boolean).join(' · ')))}
   <section class="wrap section">
@@ -297,10 +301,10 @@ async function race(args, params) {
     $('#sessBody').innerHTML = `<div class="table-wrap"><table class="standings results">
       <thead><tr><th>Pos</th><th>Driver</th><th class="hide-sm">Team</th><th>${isRace ? 'Time / Gap' : 'Best lap'}</th>${anyTyres ? '<th>Tyres</th>' : ''}${isRace ? '<th class="num">Pts</th>' : ''}</tr></thead>
       <tbody>${rows.map((x, i) => {
-        const st = x.st || 'fin', isOurs = ours.has(normName(x.d)), pts = isRace ? rowPoints(cur, i + 1, x, S.settings) : 0;
+        const st = x.st || 'fin', isOurs = ours.has(normName(x.d)), pts = isRace ? rowPoints(cur, i + 1, x, P) : 0, flp = isRace ? flBonus(cur, i + 1, x, P) : 0;
         return `<tr class="${isOurs ? 'ours' : ''} ${st !== 'fin' ? 'out' : ''}">
           <td class="pos">${st === 'fin' ? i + 1 : `<span class="st-tag">${STATUS[st]}</span>`}</td>
-          <td class="name">${esc(x.d)}${isOurs ? '<span class="ours-tag">Our team</span>' : ''}${x.fl ? '<span class="fl-tag" title="Fastest lap">⏱ Fastest lap</span>' : ''}<div class="show-sm muted small">${esc(x.t || '')}</div></td>
+          <td class="name">${esc(x.d)}${isOurs ? '<span class="ours-tag">Our team</span>' : ''}${x.fl ? `<span class="fl-tag" title="Fastest lap">⏱ Fastest lap${flp ? ` +${flp}` : ''}</span>` : ''}<div class="show-sm muted small">${esc(x.t || '')}</div></td>
           <td class="hide-sm muted">${esc(x.t || '')}</td>
           <td class="mono">${esc(x.time || (st !== 'fin' ? '—' : ''))}</td>
           ${anyTyres ? `<td class="tyres">${tyreChips(x.ty)}</td>` : ''}
@@ -320,7 +324,7 @@ async function team(args) {
   app.innerHTML = `${pageHead('The people behind the car', 'Our Team')}
   <section class="section team-section">
     <div class="wrap toolbar center">
-      <div class="tabs">${[['crew', 'Trackside'], ['drivers', 'Drivers'], ['all', 'Everyone']].map(([k, l]) => `<button class="tab" data-f="${k}">${l}</button>`).join('')}</div>
+      <div class="tabs">${[['all', 'Everyone'], ['crew', 'Trackside'], ['drivers', 'Drivers']].map(([k, l]) => `<button class="tab" data-f="${k}">${l}</button>`).join('')}</div>
     </div>
     <div class="carousel" id="carousel">
       <button class="car-arrow prev" aria-label="Previous">‹</button>

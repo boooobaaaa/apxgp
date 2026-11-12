@@ -94,24 +94,31 @@ const SESSIONS = [
   { key: 'quali', label: 'Qualifying', short: 'Quali', kind: 'quali' },
   { key: 'race', label: 'Grand Prix', short: 'Race', kind: 'race' },
 ];
-const POINTS = { race: [25, 18, 15, 12, 10, 8, 6, 4, 2, 1], sprint: [8, 7, 6, 5, 4, 3, 2, 1] };
+// Default points system (editable in the admin console under "Points System")
+const DEFAULT_POINTS = { race: [25, 18, 15, 12, 10, 8, 6, 4, 2, 1], sprint: [8, 7, 6, 5, 4, 3, 2, 1], fl_race: 1, fl_sprint: 0, fl_top: 10 };
 const TYRES = { S: ['Soft', '#e10600'], M: ['Medium', '#f5c400'], H: ['Hard', '#f2f2f2'], I: ['Intermediate', '#39b54a'], W: ['Wet', '#2a7fff'] };
 const STATUS = { fin: 'Finished', dnf: 'DNF', dns: 'DNS', dsq: 'DSQ' };
 const normName = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 const sessionsFor = (race) => SESSIONS.filter((s) => !s.sprint || race.has_sprint);
 const hasResults = (race) => !!race.results && SESSIONS.some((s) => (race.results[s.key] || []).length);
 
-function rowPoints(key, pos, row, settings = {}) {
+/** Fastest-lap bonus for a row (0 if not eligible). */
+function flBonus(key, pos, row, pts = DEFAULT_POINTS) {
+  if (!row.fl || (row.st && row.st !== 'fin')) return 0;
+  const bonus = Number(key === 'race' ? pts.fl_race : key === 'sprint' ? pts.fl_sprint : 0) || 0;
+  const top = Number(pts.fl_top) || 0;
+  return bonus && (!top || pos <= top) ? bonus : 0;
+}
+/** Points scored by the driver in position `pos` of a Sprint or Grand Prix. */
+function rowPoints(key, pos, row, pts = DEFAULT_POINTS) {
   if (row.st && row.st !== 'fin') return 0;
-  const table = POINTS[key];
+  const table = (pts && pts[key]) || DEFAULT_POINTS[key];
   if (!table) return 0;
-  let p = table[pos - 1] || 0;
-  if (key === 'race' && row.fl && settings.fastest_lap_point && pos <= 10) p += 1;
-  return p;
+  return (Number(table[pos - 1]) || 0) + flBonus(key, pos, row, pts);
 }
 
 /** Season stats for one driver, calculated from every race that has results entered. */
-function computeStats(races, name, settings = {}) {
+function computeStats(races, name, pts = DEFAULT_POINTS) {
   const n = normName(name);
   const s = { races: 0, wins: 0, podiums: 0, poles: 0, fastest_laps: 0, points: 0, top10: 0, sprint_wins: 0, sprint_podiums: 0, dnfs: 0 };
   const finishes = [], qualis = [];
@@ -131,13 +138,13 @@ function computeStats(races, name, settings = {}) {
         if (gp.pos <= 10) s.top10++;
       } else if (st === 'dnf' || st === 'dsq') s.dnfs++;
       if (gp.row.fl) s.fastest_laps++;
-      s.points += rowPoints('race', gp.pos, gp.row, settings);
+      s.points += rowPoints('race', gp.pos, gp.row, pts);
     }
     const sp = find('sprint');
     if (sp) {
       any = true;
       if ((sp.row.st || 'fin') === 'fin') { if (sp.pos === 1) s.sprint_wins++; if (sp.pos <= 3) s.sprint_podiums++; }
-      s.points += rowPoints('sprint', sp.pos, sp.row, settings);
+      s.points += rowPoints('sprint', sp.pos, sp.row, pts);
     }
     const q = find('quali');
     if (q) { any = true; qualis.push(q.pos); if (q.pos === 1) s.poles++; }
@@ -176,3 +183,78 @@ const STAT_FIELDS = [
 
 const tyreChips = (ty) => [...String(ty || '')].filter((c) => TYRES[c])
   .map((c) => `<span class="tyre t-${c}" title="${TYRES[c][0]}">${c}</span>`).join('<i class="tyre-arrow">›</i>');
+
+// ---------------------------------------------------------------- roster ("Drivers & Teams") + standings
+const gid = (p) => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+/**
+ * Brings older site.json files up to date (safe to run any number of times):
+ *  • builds data.grid (teams + drivers) from the old hand-typed standings tables
+ *  • adds data.points (points system)
+ *  • refreshes driver/team names stored in results from the roster (so renames carry through)
+ */
+function migrateData(d) {
+  d.settings = d.settings || {};
+  d.races = d.races || []; d.members = d.members || [];
+  if (!d.points) {
+    d.points = JSON.parse(JSON.stringify(DEFAULT_POINTS));
+    if (d.settings.fastest_lap_point === false) d.points.fl_race = 0;
+  }
+  delete d.settings.fastest_lap_point;
+  if (!d.grid) {
+    const teams = [], drivers = [], byName = new Map();
+    const team = (name, ours) => {
+      if (!name) return null;
+      const k = normName(name);
+      if (!byName.has(k)) { const t = { id: gid('tm'), name: String(name).trim(), ...(ours ? { is_ours: true } : {}) }; byName.set(k, t); teams.push(t); }
+      if (ours) byName.get(k).is_ours = true;
+      return byName.get(k).id;
+    };
+    (d.constructors || []).sort((a, b) => (a.pos || 99) - (b.pos || 99)).forEach((c) => team(c.team, c.is_ours));
+    const ourTeam = teams.find((t) => t.is_ours)?.id || team(d.settings.short_name || d.settings.team_name || 'Our Team', true);
+    const seen = new Set();
+    (d.drivers || []).sort((a, b) => (a.pos || 99) - (b.pos || 99)).forEach((x) => {
+      if (!x.driver || seen.has(normName(x.driver))) return; seen.add(normName(x.driver));
+      drivers.push({ id: gid('dr'), name: x.driver.trim(), team_id: team(x.team, x.is_ours) || (x.is_ours ? ourTeam : null) });
+    });
+    d.members.filter((m) => m.is_driver && !seen.has(normName(m.name))).forEach((m) => {
+      seen.add(normName(m.name)); drivers.push({ id: gid('dr'), name: m.name, team_id: ourTeam, ...(m.number ? { number: m.number } : {}) });
+    });
+    d.grid = { teams, drivers };
+  }
+  delete d.drivers; delete d.constructors;
+  const dById = new Map(d.grid.drivers.map((x) => [x.id, x])), tById = new Map(d.grid.teams.map((x) => [x.id, x]));
+  for (const r of d.races) for (const rows of Object.values(r.results || {})) for (const row of rows) {
+    if (row.di && dById.has(row.di)) row.d = dById.get(row.di).name;
+    if (row.ti && tById.has(row.ti)) row.t = tById.get(row.ti).name;
+  }
+  return d;
+}
+
+const anyResults = (d) => (d.races || []).some(hasResults);
+/** Championship tables, calculated from every Sprint and Grand Prix result. */
+function computeStandings(d) {
+  const pts = d.points || DEFAULT_POINTS;
+  const teamsById = new Map(d.grid.teams.map((t) => [t.id, t]));
+  const ourTeams = new Set(d.grid.teams.filter((t) => t.is_ours).map((t) => normName(t.name)));
+  const ourDrivers = new Set((d.members || []).filter((m) => m.is_driver).map((m) => normName(m.name)));
+  const D = new Map(), T = new Map();
+  const dEntry = (name, team) => { const k = normName(name); if (!D.has(k)) D.set(k, { driver: name, team: team || '', points: 0, fin: [] }); const e = D.get(k); if (!e.team && team) e.team = team; return e; };
+  const tEntry = (name) => { const k = normName(name); if (!T.has(k)) T.set(k, { team: name, points: 0, fin: [], is_ours: ourTeams.has(k) }); return T.get(k); };
+  d.grid.teams.forEach((t) => tEntry(t.name));
+  d.grid.drivers.forEach((x) => dEntry(x.name, teamsById.get(x.team_id)?.name));
+  for (const race of d.races || []) for (const key of ['sprint', 'race']) {
+    (race.results?.[key] || []).forEach((row, i) => {
+      const p = rowPoints(key, i + 1, row, pts), de = dEntry(row.d, row.t);
+      de.points += p;
+      if (key === 'race' && (row.st || 'fin') === 'fin') de.fin.push(i + 1);
+      if (row.t) { const te = tEntry(row.t); te.points += p; if (key === 'race' && (row.st || 'fin') === 'fin') te.fin.push(i + 1); }
+    });
+  }
+  // ties are split by countback: most wins, then most 2nd places, and so on
+  const countback = (a, b) => { for (let p = 1; p <= 30; p++) { const x = a.fin.filter((f) => f === p).length, y = b.fin.filter((f) => f === p).length; if (x !== y) return y - x; } return 0; };
+  const rank = (list) => list.sort((a, b) => b.points - a.points || countback(a, b)).map((e, i) => ({ ...e, pos: i + 1 }));
+  return {
+    drivers: rank([...D.values()]).map((e) => ({ pos: e.pos, driver: e.driver, team: e.team, points: e.points, is_ours: ourDrivers.has(normName(e.driver)) || ourTeams.has(normName(e.team)) })),
+    constructors: rank([...T.values()]).map((e) => ({ pos: e.pos, team: e.team, points: e.points, is_ours: e.is_ours })),
+  };
+}

@@ -490,3 +490,6 @@ a.race-row.has-results:hover { border-color: var(--accent); transform: translate
 @media (max-width: 640px) { .show-sm { display: block; } }
 .h2h-row { background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .cmp-note { margin-top: 14px; }
+.race-fl { margin-top: 4px; font-size: .78rem; color: #b27cf0; font-weight: 600; }
+:root[data-theme="light"] .race-fl { color: #6a1fb0; }
+.standings-note { margin: 0 0 12px; }
