@@ -255,8 +255,8 @@
   ],
   "media": [],
   "_rev": {
-    "id": "vb271bi8",
-    "at": "2026-11-12T01:40:50.500Z"
+    "id": "evgvj0s9",
+    "at": "2026-11-12T01:41:10.226Z"
   },
   "points": {
     "race": [
@@ -283,7 +283,7 @@
     ],
     "fl_race": 1,
     "fl_sprint": 0,
-    "fl_top": 10
+    "fl_top": 1
   },
   "grid": {
     "teams": [
