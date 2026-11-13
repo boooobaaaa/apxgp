@@ -831,11 +831,23 @@ function pageStandings(d, view) {
   return `<div class="page">${head('Season ' + d.league.season, 'Championship standings', '')}${tabs}${body}</div>`;
 }
 
+document.addEventListener('click', e => {
+  const b = e.target.closest && e.target.closest('[data-drv-sort]'); if (!b) return;
+  try { localStorage.setItem('league.driverSort', b.dataset.drvSort); } catch (x) { }
+  render(false);
+});
 function pageDrivers(d) {
   const st = computeStandings(d);
   const custom = (d.theme || {}).listOrder === 'custom';
-  const active = d.drivers.filter(x => x.active !== false); if (!custom) active.sort((a, b) => ((st.D[a.id] || {}).position || 999) - ((st.D[b.id] || {}).position || 999));
-  const former = d.drivers.filter(x => x.active === false);
+  let sortBy = 'default'; try { sortBy = localStorage.getItem('league.driverSort') || 'default'; } catch (e) { }
+  const lastName = x => { const p = String(x.name || '').trim().split(/\s+/); return (p[p.length - 1] || '').toLowerCase(); };
+  const num = x => { const n = parseInt(x.number, 10); return isNaN(n) ? 999 : n; };
+  const sorter = sortBy === 'number' ? (a, b) => num(a) - num(b) || lastName(a).localeCompare(lastName(b))
+    : sortBy === 'name' ? (a, b) => lastName(a).localeCompare(lastName(b)) || String(a.name).localeCompare(String(b.name))
+    : custom ? null : (a, b) => ((st.D[a.id] || {}).position || 999) - ((st.D[b.id] || {}).position || 999);
+  const active = d.drivers.filter(x => x.active !== false); if (sorter) active.sort(sorter);
+  const former = d.drivers.filter(x => x.active === false); if (sortBy !== 'default') former.sort(sorter);
+  const sortBar = `<div class="tabs drv-sort" role="group" aria-label="Sort drivers">${[['default', custom ? 'Default' : 'Championship'], ['number', 'Number'], ['name', 'Last name']].map(([k, l]) => `<button data-drv-sort="${k}" class="${sortBy === k ? 'active' : ''}">${l}</button>`).join('')}</div>`;
   const card = drv => {
     const s = st.D[drv.id] || { points: 0 }, t = driverTeam(d, drv, s);
     return `<a class="driver-card${drv.photo ? ' has-photo' : ''}" href="#/driver/${esc(drv.id)}" style="--tc:${esc(teamColor(t))}">
@@ -847,6 +859,7 @@ function pageDrivers(d) {
     </a>`;
   };
   return `<div class="page">${head('Season ' + d.league.season, 'Drivers', `${active.length} drivers on the grid.`)}
+    ${active.length > 1 ? `<div class="drv-sortbar"><span class="muted">Sort by</span>${sortBar}</div>` : ''}
     ${active.length ? `<div class="driver-grid">${active.map(card).join('')}</div>` : empty('No drivers yet', '<p>Add drivers from the admin console.</p>')}
     ${former.length ? `<section><div class="section-title"><h2>Former / reserve drivers</h2></div><div class="driver-grid">${former.map(card).join('')}</div></section>` : ''}
   </div>`;
@@ -1727,35 +1740,24 @@ function pageStewardsBody(d, rid) {
 }
 
 /* ---------------- sign-ups ---------------- */
-function pageJoin(d) {
+function pageJoin(d, sub) {
   const s = d.signups, per = Number(s.seatsPerTeam) || 2;
   const seats = d.teams.map(t => ({ t, n: per - d.drivers.filter(x => x.teamId === t.id && x.active !== false).length })).filter(x => x.n > 0);
   const total = seats.reduce((a, b) => a + b.n, 0);
-  const taken = d.drivers.filter(x => x.active !== false && x.number !== '' && x.number != null).map(x => Number(x.number)).sort((a, b) => a - b);
   const discord = d.league.links && d.league.links.discord;
-  const appForm = ((d.applications || {}).forms || []).find(f => f.open);
-  const applyBtn = appForm ? `<a class="btn primary" href="#/apply/${esc(appForm.id)}">Apply now →</a>` : s.formUrl ? `<a class="btn primary" href="${esc(s.formUrl)}" target="_blank" rel="noopener">Apply now →</a>` : discord ? `<a class="btn primary" href="${esc(discord)}" target="_blank" rel="noopener">Apply on Discord →</a>` : '';
+  const hub = window.Apps ? window.Apps.hub(d, sub) : '';
+  const open = ((d.applications || {}).forms || []).filter(f => f.open);
+  const applyBtn = hub ? (open.length === 1 ? `<a class="btn primary" href="#/apply/${esc(open[0].id)}">Apply now →</a>` : '')
+    : s.formUrl ? `<a class="btn primary" href="${esc(s.formUrl)}" target="_blank" rel="noopener">Apply now →</a>` : discord ? `<a class="btn primary" href="${esc(discord)}" target="_blank" rel="noopener">Apply on Discord →</a>` : '';
+  const seatList = seats.length ? `<ul class="seat-list">${seats.map(x => `<li style="--tc:${esc(teamColor(x.t))}">${x.t.logo ? `<img src="${esc(asset(x.t.logo))}" alt="" onerror="this.remove()">` : '<span class="swatch"></span>'}<a class="grow" href="#/team/${esc(x.t.id)}">${esc(x.t.name)}</a><span class="seat-pips">${Array.from({ length: per }, (_, k) => `<i class="${k < per - x.n ? 'taken' : ''}"></i>`).join('')}</span><span class="v">${x.n} open</span></li>`).join('')}</ul>` : '<p class="muted">Every race seat is filled — you can still apply as a reserve driver.</p>';
   return `<div class="page">${head('Season ' + d.league.season, esc(s.title || 'Join the grid'), '')}
     <div class="card" style="margin-bottom:20px"><div class="join-status"><span class="badge ${s.open ? 'next' : 'cancel'}" style="${s.open ? '' : 'text-decoration:none'}">${s.open ? 'Sign-ups open' : 'Sign-ups closed'}</span>${s.open && total ? `<span class="muted">${total} seat${total > 1 ? 's' : ''} available</span>` : ''}<span style="margin-left:auto">${s.open ? applyBtn : ''}</span></div>
-      ${s.intro ? `<div class="prose" style="margin-top:16px">${md(s.intro)}</div>` : `<p class="muted" style="margin:14px 0 0">${s.open ? 'We\'re looking for drivers! Read the requirements and send in an application.' : 'Sign-ups are closed right now — keep an eye on the news page or Discord for the next window.'}</p>`}
+      ${s.intro ? `<div class="prose" style="margin-top:16px">${md(s.intro)}</div>` : `<p class="muted" style="margin:14px 0 0">${s.open ? 'We\'re looking for drivers! Pick an application below and send it in.' : 'Sign-ups are closed right now — keep an eye on the news page or Discord for the next window.'}</p>`}
     </div>
-    <div class="grid grid-2">
-      <div class="card"><div class="card-title"><h3>Open seats</h3></div>${seats.length ? `<ul class="mini">${seats.map(x => `<li><span class="swatch" style="--tc:${esc(teamColor(x.t))}"></span><span class="grow">${esc(x.t.name)}</span><span class="v">${x.n} seat${x.n > 1 ? 's' : ''}</span></li>`).join('')}</ul>` : '<p class="muted">Every race seat is filled — you can still apply as a reserve driver.</p>'}</div>
-      <div class="card"><div class="card-title"><h3>Requirements</h3></div>${s.requirements ? `<div class="prose" style="font-size:15px">${md(s.requirements)}</div>` : `<p class="muted">Check the <a href="#/rules">rules</a> before applying.</p>`}</div>
+    <div class="grid grid-2 join-grid">
+      <div class="card"><div class="card-title"><h3>Open seats</h3></div>${seatList}</div>
+      ${hub ? `<div class="card"><div class="card-title"><h3>Applications</h3></div>${hub}</div>` : ''}
     </div>
-    ${s.open && s.showBuilder !== false ? `<section class="card" style="margin-top:20px"><div class="card-title"><h3>Build your application</h3><span class="muted" style="font-size:13px">Fill it in, copy, and paste it ${s.formUrl ? 'into the form' : 'in Discord'}</span></div>
-      <div class="pform">
-        <label class="fld"><span>Name</span><input id="ap-name" type="text"></label>
-        <label class="fld"><span>Gamertag / PSN / Steam</span><input id="ap-tag" type="text"></label>
-        <label class="fld"><span>Platform</span><select id="ap-platform"><option>PC</option><option>PlayStation</option><option>Xbox</option></select></label>
-        <label class="fld"><span>Country</span><input id="ap-country" type="text"></label>
-        <label class="fld"><span>Preferred number</span><input id="ap-number" type="number" min="1" max="99"></label>
-        <label class="fld"><span>Availability</span><input id="ap-avail" type="text" placeholder="e.g. every Wednesday 8pm CT"></label>
-        <label class="fld wide"><span>Racing experience</span><textarea id="ap-exp" placeholder="Leagues, lap times, favourite tracks…"></textarea></label>
-        ${taken.length ? `<div class="wide"><span class="muted" style="font-size:13px">Numbers already taken:</span><div class="taken">${taken.map(n => `<span>#${n}</span>`).join('')}</div></div>` : ''}
-        <div class="wide" style="display:flex;gap:10px;flex-wrap:wrap"><button class="btn primary" data-act="copy-app">Copy application</button>${applyBtn.replace('btn primary', 'btn')}</div>
-        <label class="fld wide" hidden><span>Your application</span><textarea id="ap-out" readonly rows="8"></textarea></label>
-      </div></section>` : ''}
   </div>`;
 }
 function copyApplication() {
@@ -1914,7 +1916,7 @@ const notFound = () => `<div class="page">${empty('Page not found', '<p><a href=
 
 /* ---------------- router & chrome ---------------- */
 const NAV = [['', 'Home'], ['schedule', 'Calendar'], ['results', 'Results'], ['standings', 'Standings'], ['drivers', 'Drivers'], ['teams', 'Teams'], ['news', 'News']];
-const MORE = [['about', 'About'], ['rules', 'Rules'], ['stewards', 'Stewards'], ['h2h', 'Head to head'], ['history', 'Hall of fame'], ['seasons', 'Seasons'], ['gallery', 'Gallery'], ['griddraft', 'Grid Draft'], ['apply', 'Applications'], ['join', 'Join the league']];
+const MORE = [['about', 'About'], ['rules', 'Rules'], ['stewards', 'Stewards'], ['h2h', 'Head to head'], ['history', 'Hall of fame'], ['seasons', 'Seasons'], ['gallery', 'Gallery'], ['griddraft', 'Grid Draft'], ['join', 'Join the league']];
 const ROUTES = [
   [/^$/, d => pageHome(d)],
   [/^schedule$/, d => pageSchedule(d)],
@@ -1937,7 +1939,7 @@ const ROUTES = [
   [/^gallery$/, d => pageGallery(d)],
   [/^seasons(?:\/(view)\/([^/]+))?$/, (d, m) => window.Extras ? window.Extras.pageSeasons(d, m[1], m[2]) : notFound()],
   [/^portal$/, d => window.Portal ? window.Portal.page(d) : notFound()],
-  [/^apply(?:\/([^/]+))?$/, (d, m) => window.Apps ? window.Apps.page(d, m[1]) : notFound()],
+  [/^apply(?:\/([^/]+))?(?:\/(sign))?$/, (d, m) => !m[1] || m[1] === 'status' ? pageJoin(d, m[1]) : window.Apps ? window.Apps.page(d, m[1], m[2]) : notFound()],
   [/^griddraft(?:\/(\w+))?$/, (d, m) => window.GridDraft ? window.GridDraft.page(d, m[1]) : notFound()],
   [/^fantasy(?:\/(\w+))?$/, (d, m) => window.Fantasy ? window.Fantasy.page(d, m[1]) : notFound()],
   [/^search(?:\/(.*))?$/, (d, m) => pageSearch(d, m[1] || '')],
@@ -1998,7 +2000,7 @@ function chrome() {
   const links = L.links || {};
   const ext = [['discord', 'Discord'], ['youtube', 'YouTube'], ['twitch', 'Twitch'], ['website', 'Website']].filter(([k]) => links[k]).map(([k, l]) => `<a href="${esc(links[k])}" target="_blank" rel="noopener">${l}</a>`).join('');
   document.getElementById('foot').innerHTML = `<div class="inner"><div><b style="color:var(--text)">${esc(L.name)}</b> · Season ${esc(L.season)}<br><span style="font-size:12px">${esc(L.footer ?? 'Fan-run sim racing league. Not affiliated with Formula 1.')}</span></div>
-    <div class="links">${ext}<a href="#/stewards">${esc(rcName(d))}</a><a href="#/history">Hall of fame</a><a href="#/about">About</a><a href="#/join">Join</a>${((d.applications || {}).forms || []).length ? '<a href="#/apply">Applications</a>' : ''}<a href="#/rules">Rules</a>${d.portalOn ? '<a href="#/portal">Team portal</a>' : ''}<a href="#/admin">Admin</a></div></div>`;
+    <div class="links">${ext}<a href="#/stewards">${esc(rcName(d))}</a><a href="#/history">Hall of fame</a><a href="#/about">About</a><a href="#/join">Join</a><a href="#/rules">Rules</a>${d.portalOn ? '<a href="#/portal">Team portal</a>' : ''}<a href="#/admin">Admin</a></div></div>`;
 }
 
 /* Title Case for UI labels (menus, tabs, buttons, headings). Only capitalises — never lowercases names like FIA or R5. */
@@ -2052,6 +2054,8 @@ function render(resetScroll) {
   if (window.Extras) window.Extras.afterRender(path);
   ssApply();
   setFavicon(S.data);
+  // no browser autofill / history suggestions on the site's own fields
+  document.querySelectorAll('#app input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):not([type=file]):not([autocomplete]), #app textarea:not([autocomplete])').forEach(el => el.setAttribute('autocomplete', 'off'));
   applyTitleCase(document.getElementById('app')); applyTitleCase(document.querySelector('.topbar')); applyTitleCase(document.getElementById('foot'));
   if (resetScroll) window.scrollTo({ top: 0, behavior: 'instant' });
 }

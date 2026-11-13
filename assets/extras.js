@@ -82,7 +82,13 @@ function step(dir, auto) {
 function onClick(e) {
   const b = e.target.closest('[data-mu]'); if (!b) return;
   const k = b.dataset.mu, p = prefs();
-  if (k === 'fab') { M.open = !M.open; return ui(); }
+  if (k === 'more') { M.open = !M.open; return ui(); }
+  if (k === 'fab') {
+    if (!M.audio) return;
+    if (M.audio.paused && !p.muted) { p.off = false; savePrefs(p); applyVol(); play(); return ui(); }
+    p.muted = !p.muted; p.off = false; if (!p.muted && p.vol === 0) p.vol = (Number(M.cfg.volume) || 35) / 100;
+    savePrefs(p); applyVol(); if (!p.muted && M.audio.paused) play(); return ui();
+  }
   if (k === 'toggle') { if (M.audio.paused) { p.off = false; if (p.muted) { p.muted = false; if (p.vol === 0) p.vol = (Number(M.cfg.volume) || 35) / 100; } savePrefs(p); play(); } else { p.off = true; savePrefs(p); M.audio.pause(); } return ui(); }
   if (k === 'mute') { p.muted = !p.muted; if (!p.muted && p.vol === 0) p.vol = (Number(M.cfg.volume) || 35) / 100; savePrefs(p); applyVol(); if (!p.muted && M.audio.paused && !p.off) play(); return ui(); }
   if (k === 'prev') return step(-1);
@@ -93,11 +99,11 @@ function ui() {
   const p = prefs(), playing = M.audio && !M.audio.paused, muted = p.muted, t = M.tracks[M.idx] || {};
   const vol = Math.round((p.vol === null ? (Number(M.cfg.volume) || 35) / 100 : p.vol) * 100);
   const hint = M.waiting && !playing && !muted && !p.off && !M.open ? `<button class="mu-hint" data-mu="fab">🎵 Tap anywhere for music</button>` : '';
-  const html = `${hint}<button class="mu-fab ${playing && !muted ? 'on' : ''} ${muted ? 'muted' : ''}" data-mu="fab" aria-label="Music" title="Music">
-      ${playing && !muted ? '<span class="mu-eq"><i></i><i></i><i></i><i></i></span>' : muted ? ICON.mute : '<span class="mu-note">♪</span>'}</button>
+  const html = `${hint}<button class="mu-fab ${playing && !muted ? 'on' : ''} ${muted ? 'muted' : ''}" data-mu="fab" aria-label="${muted ? 'Unmute music' : playing ? 'Mute music' : 'Play music'}" title="${muted ? 'Unmute music' : playing ? 'Mute music' : 'Play music'}">
+      ${playing && !muted ? '<span class="mu-eq"><i></i><i></i><i></i><i></i></span>' : muted ? ICON.mute : '<span class="mu-note">♪</span>'}</button><button class="mu-more ${M.open ? 'open' : ''}" data-mu="more" aria-label="Music options" title="Volume & tracks">⌃</button>
     <div class="mu-panel" ${M.open ? '' : 'hidden'}>
       <div class="mu-h"><span class="mu-lbl">${esc(M.cfg.label || 'Now playing')}</span><b class="mu-t">${esc(t.title || 'Untitled track')}</b>${M.tracks.length > 1 ? `<small class="muted">${M.idx + 1} / ${M.tracks.length}</small>` : ''}</div>
-      <div class="mu-ctl">${M.tracks.length > 1 ? `<button data-mu="prev" aria-label="Previous">${ICON.prev}</button>` : ''}<button class="mu-play" data-mu="toggle" aria-label="${playing ? 'Pause' : 'Play'}">${playing ? ICON.pause : ICON.play}</button>${M.tracks.length > 1 ? `<button data-mu="next" aria-label="Next">${ICON.next}</button>` : ''}</div>
+      ${M.tracks.length > 1 ? `<div class="mu-ctl"><button data-mu="prev" aria-label="Previous track">${ICON.prev}</button><button data-mu="next" aria-label="Next track">${ICON.next}</button></div>` : ''}
       <div class="mu-vol"><button data-mu="mute" aria-label="${muted ? 'Unmute' : 'Mute'}" title="${muted ? 'Unmute' : 'Mute'}">${muted ? ICON.mute : ICON.vol}</button><input type="range" min="0" max="100" value="${muted ? 0 : vol}" data-mu="vol" aria-label="Volume"></div>
       <p class="mu-note-s">Your choice is remembered on this device.</p>
     </div>`;

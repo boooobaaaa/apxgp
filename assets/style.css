@@ -2136,3 +2136,96 @@ button.gd-card:hover { transform: perspective(900px) translateY(-6px) rotateX(va
 .ap-form .ap-help { margin: -4px 0 0; }
 .ap-check input { accent-color: var(--miku); width: 17px; height: 17px; }
 .page-head + .ap-who { margin-top: 4px; }
+
+/* join page: seats + applications */
+.join-grid { align-items: start; }
+.seat-list { list-style: none; margin: 0; padding: 0; }
+.seat-list li { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); }
+.seat-list li:first-child { border-top: 0; }
+.seat-list img { width: 30px; height: 30px; object-fit: contain; flex: none; }
+.seat-list .swatch { width: 4px; height: 26px; border-radius: 4px; background: var(--tc); flex: none; }
+.seat-list a { color: var(--text); text-decoration: none; font-weight: 600; min-width: 0; }
+.seat-list a:hover { color: var(--miku); }
+.seat-pips { display: inline-flex; gap: 4px; }
+.seat-pips i { width: 12px; height: 12px; border-radius: 4px; background: var(--tc); box-shadow: 0 0 8px color-mix(in srgb, var(--tc) 60%, transparent); }
+.seat-pips i.taken { background: var(--line-strong); box-shadow: none; }
+.seat-list .v { font: 700 13px var(--f-mono); color: var(--accent-text); min-width: 52px; text-align: right; }
+.ap-hub .ap-list { gap: 10px; }
+.ap-hub .ap-card { padding: 14px 16px; border-radius: 14px; border: 1px solid var(--line-strong); background: color-mix(in srgb, var(--miku) 4%, transparent); }
+.ap-hub .ap-card h4 { margin: 0 0 3px; font-size: 16px; }
+.ap-hub .ap-card p { margin: 0; font-size: 13.5px; }
+.ap-hub .tabs { margin-bottom: 14px; }
+.ap-hub .ap-status { padding: 16px; border: 1px solid var(--line-strong); box-shadow: none; }
+.ap-hub .ap-who { margin: -4px 0 12px; }
+.ap-signin-sm { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--line-strong); font-size: 14px; }
+.seat-list a { flex: 1; }
+/* application form: label / help / box on shared rows so boxes line up across columns */
+.ap-form .fgrid { row-gap: 0; column-gap: 20px; align-items: stretch; }
+.ap-form .fld { display: grid; grid-template-rows: subgrid; grid-row: span 3; row-gap: 6px; align-content: start; margin: 0; }
+.ap-form .fld > span { align-self: end; }
+.ap-form .fld > .ap-help { margin: 0; align-self: start; }
+.ap-form .fld > .ap-help:empty { display: block; min-height: 0; }
+.ap-form .fld > :last-child { align-self: start; margin-bottom: 20px; }
+.ap-form .ap-multi { display: flex; flex-wrap: wrap; gap: 8px 16px; padding-top: 2px; }
+@supports not (grid-template-rows: subgrid) { .ap-form .fld { display: flex; flex-direction: column; justify-content: flex-end; } }
+
+/* ---------- contract (step 2) ---------- */
+.ap-offer { background: color-mix(in srgb, #f3d27a 18%, transparent); color: #e9c25a; box-shadow: inset 0 0 0 1px color-mix(in srgb, #f3d27a 45%, transparent); }
+.ap-signed { background: color-mix(in srgb, #b18cff 16%, transparent); color: #c4a8ff; box-shadow: inset 0 0 0 1px color-mix(in srgb, #b18cff 40%, transparent); }
+.ap-sig { font-family: "Caveat", "Segoe Script", cursive; font-size: 1.45em; line-height: 1; color: var(--text); }
+.ap-action { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-top: 14px; padding: 14px 16px; border-radius: 14px;
+  background: linear-gradient(100deg, color-mix(in srgb, #f3d27a 16%, transparent), color-mix(in srgb, var(--miku) 8%, transparent)); border: 1px solid color-mix(in srgb, #f3d27a 40%, transparent); }
+.ap-action b { display: block; } .ap-action span { color: var(--text-2); font-size: 14px; }
+.st-offer .ap-steps li.now span { background: linear-gradient(90deg, #f3d27a, color-mix(in srgb, #f3d27a 30%, transparent)); }
+.st-signed .ap-steps li.now span { background: linear-gradient(90deg, #b18cff, color-mix(in srgb, #b18cff 30%, transparent)); }
+.ap-contract-copy { margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
+.ap-contract-copy summary { cursor: pointer; font-size: 14px; color: var(--miku); }
+.ap-contract-copy .prose { max-height: 320px; overflow: auto; margin-top: 10px; font-size: 14px; }
+.contract { max-width: 860px; margin: 0 auto; padding: clamp(20px, 4vw, 40px); }
+.ct-head { display: flex; gap: 18px; align-items: center; padding-bottom: 18px; margin-bottom: 18px; border-bottom: 1px solid var(--line-strong); }
+.ct-head img { width: 64px; height: 64px; object-fit: contain; }
+.ct-head h1 { margin: 2px 0 4px; font-size: clamp(26px, 4vw, 36px); }
+.ct-head p { margin: 0; }
+.ct-terms { max-height: 52vh; overflow: auto; padding: 18px 22px; border-radius: 14px; background: color-mix(in srgb, var(--bg) 55%, transparent); border: 1px solid var(--line); font-size: 15px; line-height: 1.65; margin: 14px 0 18px; }
+.ct-sign { display: grid; gap: 16px; }
+.ct-agree { align-items: flex-start; font-size: 15px; } .ct-agree input { margin-top: 3px; }
+.ct-sigrow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: end; }
+.ct-sign .fld { display: flex; flex-direction: column; gap: 6px; }
+.ct-sign .fld > span { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.ct-sign input[name=signature] { width: 100%; background: color-mix(in srgb, var(--bg) 60%, transparent); border: 1px solid var(--line-strong); border-radius: 10px; color: var(--text); font: 15px var(--f-body); padding: 10px 12px; outline: none; }
+.ct-sign input[name=signature]:focus { border-color: var(--miku); }
+.ct-sigline { border-bottom: 1.5px solid var(--text-2); padding-bottom: 4px; display: flex; flex-direction: column; min-height: 58px; justify-content: flex-end; }
+.ct-preview { font-size: 34px; }
+.ct-sigline small { color: var(--muted); font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; margin-top: 6px; }
+.ap-signed-box { margin: 4px 0 8px; padding: 12px 14px; border-radius: 12px; background: color-mix(in srgb, #b18cff 10%, transparent); border-left: 3px solid #b18cff; }
+.ap-signed-box details { margin-top: 8px; } .ap-signed-box summary { cursor: pointer; color: var(--miku); font-size: 13.5px; }
+.ap-signed-box .prose { max-height: 280px; overflow: auto; font-size: 14px; margin-top: 8px; }
+textarea.ct-area { min-height: 220px; }
+@media (max-width: 640px) { .ct-sigrow { grid-template-columns: 1fr; } }
+.ap-form textarea.ap-grow { min-height: 44px; resize: none; overflow: hidden; line-height: 1.45; }
+
+.mu-more { position: absolute; left: 40px; bottom: 38px; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line-strong); background: var(--card-solid, var(--card)); color: var(--text-2); font-size: 12px; line-height: 1; cursor: pointer; display: grid; place-items: center; padding: 0 0 2px; z-index: 2; transition: transform .2s; }
+.mu-more:hover { color: var(--miku); border-color: var(--miku); }
+.mu-more.open { transform: rotate(180deg); }
+@media (max-width: 760px) { .mu-more { left: 34px; bottom: 32px; } }
+
+/* drivers sort bar */
+.drv-sortbar { display: flex; align-items: center; gap: 12px; margin: -6px 0 18px; flex-wrap: wrap; font-size: 13px; }
+.drv-sortbar .tabs { margin: 0; }
+/* calendar cards: badges wrap instead of clipping */
+.round-card .rc-top { flex-wrap: wrap; align-items: flex-start; row-gap: 6px; }
+.round-card .rc-round { white-space: nowrap; }
+.round-card .rc-top > span:last-child { flex-wrap: wrap; justify-content: flex-end; }
+.round-card .badge { white-space: nowrap; }
+
+/* admin drivers toolbar */
+.drv-tools { display: grid; gap: 10px; }
+.drv-tools-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.drv-tools .tabs { margin: 0; }
+.drv-tools input[type=search] { flex: 1; min-width: 200px; }
+.drv-tools-row > select { width: auto; flex: 0 1 200px; min-width: 150px; }
+.drv-tools-row > input[type=search] { flex: 1 1 240px; background: color-mix(in srgb, var(--bg) 60%, transparent); border: 1px solid var(--line-strong); border-radius: 10px; color: var(--text); font: 14px var(--f-body); padding: 9px 12px; outline: none; }
+.drv-tools-row > input[type=search]:focus { border-color: var(--miku); }
+
+.combo-typing { display: flex; gap: 4px; align-items: center; }
+.combo-typing input { flex: 1; min-width: 0; }

@@ -18,7 +18,7 @@ function fbStore(conf) {
   let A, F, auth, db;
   const emit = () => s.listeners.forEach(f => { try { f(); } catch (e) { } });
   const ts = v => v && v.toMillis ? v.toMillis() : (v || 0);
-  const conv = x => Object.assign({ id: x.id }, x.data(), { createdAt: ts(x.data().createdAt), updatedAt: ts(x.data().updatedAt), reviewedAt: ts(x.data().reviewedAt) });
+  const conv = x => Object.assign({ id: x.id }, x.data(), { createdAt: ts(x.data().createdAt), updatedAt: ts(x.data().updatedAt), reviewedAt: ts(x.data().reviewedAt), signedAt: ts(x.data().signedAt) });
   (async () => {
     try {
       const [app, au, fs] = await Promise.all([import(SDK + 'firebase-app.js'), import(SDK + 'firebase-auth.js'), import(SDK + 'firebase-firestore.js')]);
@@ -68,13 +68,14 @@ function fbStore(conf) {
     async editApp(id, x) { await F.updateDoc(F.doc(db, 'applications', id), { applicant: x.applicant, answers: x.answers, updatedAt: F.serverTimestamp() }); },
     async withdrawApp(id) { await F.deleteDoc(F.doc(db, 'applications', id)); },
     async allApps() { const q = await F.getDocs(F.collection(db, 'applications')); return q.docs.map(conv); },
-    async reviewApp(id, status, note, reviewer) { await F.updateDoc(F.doc(db, 'applications', id), { status, note: note || '', reviewer: reviewer || '', reviewedAt: F.serverTimestamp() }); },
+    async reviewApp(id, status, note, reviewer, clearSig) { await F.updateDoc(F.doc(db, 'applications', id), Object.assign({ status, note: note || '', reviewer: reviewer || '', reviewedAt: F.serverTimestamp() }, clearSig ? { signature: '', contract: '', signedAt: null } : {})); },
+    async signApp(id, signature, contract) { await F.updateDoc(F.doc(db, 'applications', id), { status: 'signed', signature, contract, signedAt: F.serverTimestamp() }); },
     async deleteApp(id) { await F.deleteDoc(F.doc(db, 'applications', id)); }
   });
   return s;
 }
 let STORE = null, KEY = '';
-function hook(s) { if (s && !s.__hooked) { s.__hooked = true; s.on(() => { P.subs = null; if (/^#\/(portal|admin|apply)/.test(location.hash)) LG.render(false); }); } return s; }
+function hook(s) { if (s && !s.__hooked) { s.__hooked = true; s.on(() => { P.subs = null; if (/^#\/(portal|admin|apply|join)/.test(location.hash)) LG.render(false); }); } return s; }
 function store(d) {
   if (window.PT_TEST_STORE) return hook(window.PT_TEST_STORE);
   const conf = d.gridDraft && d.gridDraft.firebase && d.gridDraft.firebase.apiKey ? d.gridDraft.firebase : null;
@@ -167,8 +168,13 @@ const RULES = `
       allow update: if (signedIn() && resource.data.uid == request.auth.uid && resource.data.status == 'pending'
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['applicant', 'answers', 'updatedAt'])
           && request.resource.data.updatedAt == request.time && validApp(request.resource.data))
-        || (canReviewApps() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'note', 'reviewer', 'reviewedAt'])
-          && request.resource.data.status in ['pending', 'accepted', 'waitlist', 'denied']
+        || (signedIn() && resource.data.uid == request.auth.uid && resource.data.status == 'offer'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'signature', 'contract', 'signedAt'])
+          && request.resource.data.status == 'signed' && request.resource.data.signedAt == request.time
+          && request.resource.data.signature is string && request.resource.data.signature.size() >= 2 && request.resource.data.signature.size() <= 80
+          && request.resource.data.contract is string && request.resource.data.contract.size() <= 30000)
+        || (canReviewApps() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'note', 'reviewer', 'reviewedAt', 'signature', 'contract', 'signedAt'])
+          && request.resource.data.status in ['pending', 'offer', 'signed', 'accepted', 'waitlist', 'denied']
           && request.resource.data.note is string && request.resource.data.note.size() <= 2000
           && request.resource.data.reviewer is string && request.resource.data.reviewer.size() <= 80);
       allow delete: if canReviewApps() || (signedIn() && resource.data.uid == request.auth.uid && resource.data.status in ['pending', 'denied']);

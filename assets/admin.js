@@ -8,7 +8,16 @@
 const LG = window.LG;
 const { esc, clone, uid, byId, fmtPts, toast } = LG;
 const K = { token: 'league.gh.token', cfg: 'league.gh.cfg', auth: 'league.admin.auth' };
-const A = { section: 'dashboard', roundId: null, session: 'race', newsId: null, open: {} };
+const A = { section: 'dashboard', roundId: null, session: 'race', newsId: null, open: {}, typing: {} };
+/* a real dropdown with an "✎ Type my own…" escape hatch (instead of the browser's autofill-style suggestions) */
+function combo(path, val, options, ph = '') {
+  val = val == null ? '' : String(val);
+  if (A.typing[path]) {
+    return `<span class="combo-typing"><input type="text" data-path="${path}" value="${esc(val)}" placeholder="${esc(ph)}" autocomplete="off" data-combo-input autofocus><button type="button" class="iconbtn" data-act="combo-list" data-path-k="${esc(path)}" title="Pick from the list">▾</button></span>`;
+  }
+  const list = val && !options.includes(val) ? [val, ...options] : options;
+  return `<select data-path="${path}" data-combo>${val ? '' : `<option value="" selected>${esc(ph || '— choose —')}</option>`}${list.map(o => `<option value="${esc(o)}" ${o === val ? 'selected' : ''}>${esc(o)}</option>`).join('')}<option value="__type">✎ Type my own…</option></select>`;
+}
 
 const SECTIONS = [
   ['dashboard', 'Dashboard', '◈'], ['league', 'League & rules', '✦'], ['theme', 'Look & theme', '✿'], ['drivers', 'Drivers', '◉'], ['teams', 'Constructors', '▣'],
@@ -177,12 +186,35 @@ function secLeague(d) {
     </div>`}`;
 }
 
+const ADS = (() => { try { return Object.assign({ sort: 'custom', team: '', show: 'all' }, JSON.parse(localStorage.getItem('league.admin.drvview') || '{}')); } catch (e) { return { sort: 'custom', team: '', show: 'all' }; } })();
+const saveADS = () => { try { localStorage.setItem('league.admin.drvview', JSON.stringify(ADS)); } catch (e) { } };
+const lastNameOf = x => { const p = String(x.name || '').trim().split(/\s+/); return (p[p.length - 1] || '').toLowerCase(); };
+function driverOrder(d, st) {
+  const num = x => { const n = parseInt(x.number, 10); return isNaN(n) ? 999 : n; };
+  const team = x => { const t = byId(d.teams, x.teamId); return t ? t.name.toLowerCase() : 'zzz'; };
+  const pos = x => (st.D[x.id] || {}).position || 999;
+  const by = { number: (a, b) => num(a) - num(b), name: (a, b) => lastNameOf(a).localeCompare(lastNameOf(b)) || String(a.name).localeCompare(String(b.name)),
+    team: (a, b) => team(a).localeCompare(team(b)) || num(a) - num(b), standings: (a, b) => pos(a) - pos(b) || num(a) - num(b) }[ADS.sort];
+  const idx = d.drivers.map((x, i) => i);
+  return by ? idx.sort((i, j) => by(d.drivers[i], d.drivers[j])) : idx;
+}
+function seasonOpts(d) {
+  const s = new Set([String(d.league.season)]);
+  (d.history || []).forEach(h => h && h.season != null && s.add(String(h.season)));
+  (d.drivers || []).forEach(x => (x.history || []).forEach(h => { if (h) { if (h.fromSeason) s.add(String(h.fromSeason)); if (h.toSeason) s.add(String(h.toSeason)); } }));
+  return [...s].filter(Boolean).sort((a, b) => (parseFloat(a) || 0) - (parseFloat(b) || 0) || a.localeCompare(b));
+}
 function secDrivers(d) {
   const st = LG.computeStandings(d);
-  const items = d.drivers.map((x, i) => {
+  const custom = ADS.sort === 'custom';
+  const shownIdx = driverOrder(d, st).filter(i => { const x = d.drivers[i]; return (!ADS.team || x.teamId === ADS.team || (ADS.team === '-' && !x.teamId)) && (ADS.show === 'all' || (ADS.show === 'active' ? x.active !== false : x.active === false)); });
+  const canMove = custom && !ADS.team && ADS.show === 'all';
+  const items = shownIdx.map(i => {
+    const x = d.drivers[i];
     const t = byId(d.teams, x.teamId), key = 'drv-' + x.id, p = `drivers.${i}`;
-    return `<details class="item" data-key="${key}" ${A.open[key] ? 'open' : ''}>
-      <summary>${mvBtns('drivers', i, d.drivers.length)}<span class="swatch" style="--tc:${esc(LG.teamColor(t))}"></span><b class="mono" style="width:34px">${esc(x.number ?? '')}</b>${LG.nameHTML(x.name)} ${LG.flag(x.country)} <span class="muted" style="font-size:13px">${esc(t ? t.name : 'No team')} · ${fmtPts((st.D[x.id] || {}).points || 0)} pts</span>${x.active === false ? '<span class="pill-inactive">inactive</span>' : ''}</summary>
+    const search = [x.name, x.number, x.gamertag, t && t.name, x.country].filter(Boolean).join(' ').toLowerCase();
+    return `<details class="item" data-key="${key}" data-search="${esc(search)}" ${A.open[key] ? 'open' : ''}>
+      <summary>${canMove ? mvBtns('drivers', i, d.drivers.length) : ''}<span class="swatch" style="--tc:${esc(LG.teamColor(t))}"></span><b class="mono" style="width:34px">${esc(x.number ?? '')}</b>${LG.nameHTML(x.name)} ${LG.flag(x.country)} <span class="muted" style="font-size:13px">${esc(t ? t.name : 'No team')} · ${fmtPts((st.D[x.id] || {}).points || 0)} pts</span>${x.active === false ? '<span class="pill-inactive">inactive</span>' : ''}</summary>
       <div class="body"><div class="fgrid">
         ${F.text('Full name', p + '.name', x.name, 'data-reload')}
         ${F.num('Car number', p + '.number', x.number, 'data-reload')}
@@ -198,9 +230,9 @@ function secDrivers(d) {
           ${(x.history || []).length ? `<div style="overflow-x:auto"><table class="rtable"><thead><tr><th>Team</th><th>Role</th><th>From season</th><th>Round</th><th>To season</th><th>Round</th><th></th></tr></thead><tbody>${(x.history || []).map((h, k) => `<tr>
             <td><select data-path="${p}.history.${k}.teamId" data-reload>${[['', '— other team (type) —'], ...d.teams.map(t => [t.id, t.name])].map(([v, l]) => opt(v, l, h.teamId)).join('')}</select>${h.teamId ? '' : `<input type="text" data-path="${p}.history.${k}.team" value="${esc(h.team || '')}" placeholder="Team name" style="margin-top:4px">`}</td>
             <td class="c-md"><select data-path="${p}.history.${k}.role">${[...LG.HIST_ROLES, ...(h.role && !LG.HIST_ROLES.includes(h.role) ? [h.role] : [])].map(r => `<option value="${esc(r)}" ${r === (h.role || 'Race Driver') ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></td>
-            <td class="c-sm"><input type="text" data-path="${p}.history.${k}.fromSeason" value="${esc(h.fromSeason || '')}" placeholder="${esc(d.league.season)}"></td>
+            <td class="c-sm">${combo(`${p}.history.${k}.fromSeason`, h.fromSeason || '', seasonOpts(d), 'Season')}</td>
             <td class="c-sm"><input type="number" data-num data-path="${p}.history.${k}.fromRound" value="${esc(h.fromRound ?? '')}" placeholder="1"></td>
-            <td class="c-sm"><input type="text" data-path="${p}.history.${k}.toSeason" value="${esc(h.toSeason || '')}" placeholder="(current)"></td>
+            <td class="c-sm">${combo(`${p}.history.${k}.toSeason`, h.toSeason || '', seasonOpts(d), 'Current')}</td>
             <td class="c-sm"><input type="number" data-num data-path="${p}.history.${k}.toRound" value="${esc(h.toRound ?? '')}"></td>
             <td class="c-act"><button class="iconbtn del" data-act="th-del" data-i="${i}" data-k="${k}">✕</button></td></tr>`).join('')}</tbody></table></div>` : ''}
           <div class="toolbar" style="margin-top:8px"><button class="btn sm" data-act="th-add" data-i="${i}">+ Add team spell</button><button class="btn sm" data-act="th-auto" data-i="${i}">Fill from this season's results</button></div>
@@ -210,8 +242,18 @@ function secDrivers(d) {
       <div class="item-actions"><a class="btn sm ghost" href="#/driver/${esc(x.id)}">View page</a><button class="btn sm danger" data-act="del-driver" data-i="${i}">Delete driver</button></div></div>
     </details>`;
   }).join('');
+  const sorts = [['custom', 'My order'], ['number', 'Number'], ['name', 'Last name'], ['team', 'Team'], ['standings', 'Championship']];
+  const bar = d.drivers.length > 1 ? `<div class="a-card drv-tools">
+      <div class="drv-tools-row"><span class="muted">Sort</span><div class="tabs">${sorts.map(([k, l]) => `<button data-act="drv-sort" data-s="${k}" class="${ADS.sort === k ? 'active' : ''}">${l}</button>`).join('')}</div>
+        ${!custom ? `<button class="btn sm" data-act="drv-save-order" title="Make this the saved order (used for ↑ ↓ and the public pages when set to My order)">Save as my order</button>` : ''}
+        <span style="margin-left:auto;display:flex;gap:6px"><button class="btn sm ghost" data-act="drv-expand">Expand all</button><button class="btn sm ghost" data-act="drv-collapse">Collapse all</button></span></div>
+      <div class="drv-tools-row"><input type="search" id="drv-q" placeholder="Search name, number, team, gamertag…" autocomplete="off">
+        <select id="drv-team"><option value="">All teams</option>${d.teams.map(t => `<option value="${esc(t.id)}" ${ADS.team === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}<option value="-" ${ADS.team === '-' ? 'selected' : ''}>No team</option></select>
+        <select id="drv-show">${[['all', 'Active & benched'], ['active', 'Active only'], ['benched', 'Benched only']].map(([k, l]) => `<option value="${k}" ${ADS.show === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+</div>
+      ${!canMove ? `<p class="hint" style="margin:8px 0 0">↑ ↓ buttons show in <b>My order</b> with no filters.</p>` : ''}</div>` : '';
   return head('Drivers', 'Moving a driver to a new team only affects future results — past points stay with the team they scored them for. Untick "Active" to bench someone without losing their history.',
-    `<button class="btn primary" data-act="add-driver">+ Add driver</button>`) + `<div class="a-card">${items || '<p class="muted">No drivers yet.</p>'}</div>`;
+    `<button class="btn primary" data-act="add-driver">+ Add driver</button>`) + bar + `<div class="a-card" id="drv-list">${items || `<p class="muted">${d.drivers.length ? 'No drivers match.' : 'No drivers yet.'}</p>`}<p class="muted drv-none" hidden>No drivers match your search.</p></div>`;
 }
 
 function secTeams(d) {
@@ -293,7 +335,7 @@ function secCalendar(d) {
         ${F.area('Round notes (shown under results)', p + '.notes', r.notes)}
         <div class="wide"><div class="fld"><span>Weekend schedule (shown on the round page; leave empty to just show the race start)</span></div>
           ${(r.sessions || []).length ? `<table class="rtable sess"><thead><tr><th>Session</th><th>Start (your local time)</th><th>End (optional)</th><th></th></tr></thead><tbody>${(r.sessions || []).map((x, k) => `<tr>
-            <td><input type="text" list="sess-presets" data-path="${p}.sessions.${k}.name" value="${esc(x.name || '')}"></td>
+            <td>${combo(`${p}.sessions.${k}.name`, x.name || '', LG.SESSION_PRESETS, 'Session')}</td>
             <td><input type="datetime-local" data-dt data-path="${p}.sessions.${k}.start" data-reload value="${toLocalInput(x.start)}"></td>
             <td><input type="datetime-local" data-dt data-path="${p}.sessions.${k}.end" value="${toLocalInput(x.end)}"></td>
             <td class="c-act"><button class="iconbtn del" data-act="del-sess" data-i="${i}" data-k="${k}">✕</button></td></tr>`).join('')}</tbody></table>` : ''}
@@ -309,7 +351,7 @@ function secCalendar(d) {
   }).join('');
   return head('Calendar', 'Times are entered in your local time and shown to each visitor in theirs. The site is always ordered by round number.',
     `<button class="btn" data-act="sort-rounds">Sort by round</button><button class="btn primary" data-act="add-round">+ Add round</button>`) +
-    `<div class="a-card">${items || '<p class="muted">No rounds yet.</p>'}</div><datalist id="sess-presets">${LG.SESSION_PRESETS.map(x => `<option value="${esc(x)}">`).join('')}</datalist>`;
+    `<div class="a-card">${items || '<p class="muted">No rounds yet.</p>'}</div>`;
 }
 
 function secResults(d) {
@@ -618,7 +660,7 @@ const APA = { list: null, loading: false, err: '', filter: 'pending', hook: unde
 window.addEventListener('hashchange', () => { if (/^#\/admin\/applications/.test(location.hash) && !APA.loading) { APA.list = null; APA.hook = undefined; setTimeout(rerender, 0); } });
 function secApplications(d) {
   const Apps = window.Apps, s = teamStore();
-  const top = head('Applications', 'Build application forms people fill in on the site. New applications are posted to your Discord channel; you accept, waitlist or deny them here and the applicant sees the result on the site (More → Applications → My applications).', `<a class="btn" href="#/apply">View public page</a>`);
+  const top = head('Applications', 'Build application forms people fill in on the site. New applications are posted to your Discord channel; you approve, waitlist or deny them here, approved people sign a contract on the site, and you confirm them. Applicants follow every step on the Join the league page → My applications.', `<a class="btn" href="#/apply">View public page</a>`);
   const forms = d.applications.forms;
   const qRow = (fi, q, k, n) => {
     const p = `applications.forms.${fi}.questions.${k}`;
@@ -636,13 +678,24 @@ function secApplications(d) {
       <div class="body">
         <div class="fgrid">${F.text('Form title', `applications.forms.${fi}.title`, f.title || '')}${F.check('Open — people can apply', `applications.forms.${fi}.open`, !!f.open)}</div>
         <div class="fgrid">${F.area('Description (shown above the form)', `applications.forms.${fi}.description`, f.description || '')}</div>
-        <p class="hint">Everyone is always asked for their <b>name / nickname</b> first. Link to this form: <code>#/apply/${esc(f.id)}</code></p>
+        <div class="fgrid">${F.text('First question (always asked — used as the applicant\'s name in review & Discord)', `applications.forms.${fi}.nameLabel`, f.nameLabel || '', 'placeholder="Your name / nickname"')}${F.text('Its help text (optional)', `applications.forms.${fi}.nameHelp`, f.nameHelp || '', 'placeholder="Shown to the admins and in Discord"')}</div>
+        <div class="fgrid">${F.select('After approval', `applications.forms.${fi}.contract`, f.contract || 'league', [['league', 'Send the league contract to sign'], ['custom', 'Send a custom contract for this form'], ['none', 'No contract — accepting is final']])}</div>
+        ${f.contract === 'custom' ? `<div class="fgrid">${F.text('Contract title', `applications.forms.${fi}.contractTitle`, f.contractTitle || '', 'placeholder="e.g. Team staff agreement"')}${F.area('Custom terms for this form (Markdown: # headings, **bold**, lists)', `applications.forms.${fi}.contractTerms`, f.contractTerms || '', 'ct-area')}</div>` : ''}
+        <p class="hint">Link to this form: <code>#/apply/${esc(f.id)}</code></p>
         <h4 style="margin:14px 0 6px">Questions</h4>
         ${(f.questions || []).map((q, k) => qRow(fi, q, k, f.questions.length)).join('') || '<p class="muted">No questions yet.</p>'}
         <div class="toolbar" style="margin-top:10px"><button class="btn sm" data-act="apq-add" data-i="${fi}">+ Add question</button><button class="btn sm danger" data-act="apf-del" data-i="${fi}" style="margin-left:auto">Delete form</button></div>
       </div></details>`;
   }).join('');
-  const builder = `<div class="a-card"><h3>Forms</h3>${formsHTML || '<p class="muted">No forms yet — start from a template.</p>'}
+  const C = d.applications.contract = Object.assign({ enabled: false, title: 'Terms & Conditions', terms: '', agree: '' }, d.applications.contract || {});
+  const contractCard = `<div class="a-card"><h3>Contract (step 2)</h3>
+    <p class="hint" style="margin-top:-4px">When this is on, approving an application sends the applicant a contract. They read it, tick “I agree” and type their name to sign on the site; it comes back to you under <b>Contracts</b> to confirm. Forms can use this contract, their own, or none (set on each form).</p>
+    <div class="fgrid">${F.check('Send this contract after approval', 'applications.contract.enabled', !!C.enabled)}${F.text('Contract title', 'applications.contract.title', C.title || '')}</div>
+    <div class="fgrid">${F.area('Terms & Conditions (Markdown: # headings, **bold**, - lists)', 'applications.contract.terms', C.terms || '', 'ct-area')}</div>
+    <div class="fgrid">${F.text('“I agree” checkbox text', 'applications.contract.agree', C.agree || '', 'wide placeholder="I have read, understood and agree to the Terms & Conditions above."')}</div>
+    ${C.enabled && !String(C.terms || '').trim() ? '<div class="warn">Add your terms above — without them, approving accepts people straight away.</div>' : ''}
+    <p class="hint">Publish after changing it. Each signed contract keeps a copy of the exact terms they agreed to.</p></div>`;
+  const builder = contractCard + `<div class="a-card"><h3>Forms</h3>${formsHTML || '<p class="muted">No forms yet — start from a template.</p>'}
     <div class="toolbar" style="margin-top:12px"><span class="hint" style="margin:0">New form:</span>${Object.entries(Apps.TEMPLATES).map(([k, t]) => `<button class="btn sm" data-act="apf-add" data-tpl="${k}">+ ${esc(t.title)}</button>`).join('')}<button class="btn sm ghost" data-act="apf-add" data-tpl="blank">+ Blank form</button></div>
     <p class="hint">Forms are part of your site — <b>Publish</b> after changing them. The answers people send are stored privately in Firebase, never in your public site files.</p></div>`;
   if (!s) return top + `<div class="warn">Applications use the same Firebase project as Grid Draft. Finish the setup in <a href="#/admin/griddraft">Grid Draft</a> first (steps 1–7), then re-copy the rules.</div>` + builder;
@@ -657,12 +710,23 @@ function secApplications(d) {
       .catch(e => { APA.list = []; APA.err = (e.code || e.message) + (/permission/.test(e.code || e.message) ? ' — re-copy the security rules from Grid Draft ③ into Firebase (they now include applications).' : ''); })
       .finally(() => { APA.loading = false; rerender(); });
   }
-  const all = APA.list || [], counts = { pending: 0, accepted: 0, waitlist: 0, denied: 0 };
-  all.forEach(a => { counts[a.status] = (counts[a.status] || 0) + 1; });
-  const shown = all.filter(a => (APA.filter === 'all' || a.status === APA.filter) && (!APA.form || a.formId === APA.form));
+  const all = APA.list || [], counts = { pending: 0, contracts: 0, accepted: 0, waitlist: 0, denied: 0 };
+  all.forEach(a => { const k = ['offer', 'signed'].includes(a.status) ? 'contracts' : a.status; counts[k] = (counts[k] || 0) + 1; });
+  const toConfirm = all.filter(a => a.status === 'signed').length;
+  const inFilter = a => APA.filter === 'all' || (APA.filter === 'contracts' ? ['offer', 'signed'].includes(a.status) : a.status === APA.filter);
+  const shown = all.filter(a => inFilter(a) && (!APA.form || a.formId === APA.form)).sort((x, y) => (y.status === 'signed') - (x.status === 'signed'));
   const fmt = t => t ? new Date(t).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+  const rb = (a, st, label, cls = '', clear = false) => `<button class="btn sm ${cls}" data-act="ap-review" data-id="${esc(a.id)}" data-st="${st}" ${clear ? 'data-clear="1"' : ''}>${label}</button>`;
+  const btn = (a, C) => {
+    const st = a.status, back = rb(a, 'pending', 'Back to review', 'ghost', true);
+    if (st === 'pending') return (C ? rb(a, 'offer', '✓ Approve &amp; send contract', 'primary') : rb(a, 'accepted', '✓ Accept', 'primary')) + rb(a, 'waitlist', '🕓 Waitlist') + rb(a, 'denied', '✕ Deny', 'danger');
+    if (st === 'offer') return rb(a, 'accepted', 'Accept without contract') + rb(a, 'denied', '✕ Deny', 'danger') + back;
+    if (st === 'signed') return rb(a, 'accepted', '✓ Confirm — fully accepted', 'primary') + rb(a, 'offer', 'Ask them to sign again', '', true) + rb(a, 'denied', '✕ Deny', 'danger');
+    if (st === 'waitlist') return (C ? rb(a, 'offer', '✓ Approve &amp; send contract', 'primary') : rb(a, 'accepted', '✓ Accept', 'primary')) + rb(a, 'denied', '✕ Deny', 'danger') + back;
+    return back;
+  };
   const review = `<div class="a-card" style="overflow-x:auto"><div class="card-title" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px"><h3 style="margin:0">Review</h3>
-      <div class="tabs" style="margin:0">${[['pending', 'Waiting'], ['accepted', 'Accepted'], ['waitlist', 'Waitlist'], ['denied', 'Denied'], ['all', 'All']].map(([k, l]) => `<button data-act="ap-filter" data-f="${k}" class="${APA.filter === k ? 'active' : ''}">${l}${k !== 'all' && counts[k] ? ` <span class="muted">${counts[k]}</span>` : ''}</button>`).join('')}</div>
+      <div class="tabs" style="margin:0">${[['pending', 'Waiting'], ['contracts', 'Contracts'], ['accepted', 'Accepted'], ['waitlist', 'Waitlist'], ['denied', 'Denied'], ['all', 'All']].map(([k, l]) => `<button data-act="ap-filter" data-f="${k}" class="${APA.filter === k ? 'active' : ''}">${l}${k !== 'all' && counts[k] ? ` <span class="muted">${counts[k]}</span>` : ''}${k === 'contracts' && toConfirm ? ' <span class="dot"></span>' : ''}</button>`).join('')}</div>
       ${forms.length > 1 ? `<select id="ap-form-filter"><option value="">All forms</option>${forms.map(f => `<option value="${esc(f.id)}" ${APA.form === f.id ? 'selected' : ''}>${esc(f.title)}</option>`).join('')}</select>` : ''}
       <button class="btn sm" data-act="ap-reload" style="margin-left:auto">Refresh</button></div>
     ${APA.err ? `<div class="warn">${esc(APA.err)}</div>` : ''}
@@ -673,14 +737,16 @@ function secApplications(d) {
         <div class="body"><dl class="ap-answers">${qs.map(q => `<dt>${esc(q.label)}</dt><dd>${esc(Apps.answerText(d, q, (a.answers || {})[q.id]) || '—')}</dd>`).join('')}</dl>
           <p class="hint">Google account: <span class="mono">${esc(a.email || '')}</span>${a.reviewer ? ` · last decision by ${esc(a.reviewer)} ${esc(fmt(a.reviewedAt))}` : ''}</p>
           <label class="fld wide"><span>Message to the applicant (they'll see it on the site${APA.hook && APA.hook.decisions !== false ? ' and it\'s posted to Discord' : ''})</span><textarea id="ap-note-${esc(a.id)}" rows="3" placeholder="e.g. Welcome aboard! You'll drive for … from Round 6.">${esc(a.note || '')}</textarea></label>
-          <div class="toolbar" style="margin-top:8px"><button class="btn sm primary" data-act="ap-review" data-id="${esc(a.id)}" data-st="accepted">✓ Accept</button><button class="btn sm" data-act="ap-review" data-id="${esc(a.id)}" data-st="waitlist">🕓 Waitlist</button><button class="btn sm danger" data-act="ap-review" data-id="${esc(a.id)}" data-st="denied">✕ Deny</button>${a.status !== 'pending' ? `<button class="btn sm ghost" data-act="ap-review" data-id="${esc(a.id)}" data-st="pending">Back to review</button>` : ''}<button class="btn sm ghost" data-act="ap-delete" data-id="${esc(a.id)}" style="margin-left:auto">Delete</button></div></div></details>`;
+          ${a.status === 'signed' ? `<div class="ap-signed-box"><div><b>✍️ Signed</b> as <span class="ap-sig">${esc(a.signature || '')}</span> · ${esc(fmt(a.signedAt))}</div>${a.contract ? `<details><summary>Read the contract they signed</summary><div class="prose">${LG.md(a.contract)}</div></details>` : ''}</div>` : a.status === 'offer' ? `<div class="ok-note">📜 Contract sent — waiting for them to sign it on the site.</div>` : ''}
+          <div class="toolbar" style="margin-top:8px">${btn(a, Apps.contractFor(d, f))}<button class="btn sm ghost" data-act="ap-delete" data-id="${esc(a.id)}" style="margin-left:auto">Delete</button></div></div></details>`;
     }).join('') : `<p class="muted">${APA.filter === 'pending' ? 'Nothing waiting for review. 🎉' : 'Nothing here.'}</p>`}</div>`;
   const h = APA.hook || {};
   const discord = owner ? `<div class="a-card"><h3>Discord channel</h3>
       ${h.url ? '<div class="ok-note">Connected — new applications are posted to your channel.</div>' : '<div class="warn">Not connected yet — applications still work, they just won\'t be posted to Discord.</div>'}
       <div class="fgrid"><label class="fld wide"><span>Webhook for your applications channel</span><input type="password" id="ap-hook" placeholder="${h.url ? '•••••• saved — paste a new one to replace it' : 'https://discord.com/api/webhooks/…'}" autocomplete="off"></label>
         <label class="fld"><span>Ping with each new application (optional)</span><input id="ap-ping" value="${esc(h.ping || '')}" placeholder="e.g. <@&123456789> for a role"></label>
-        <label class="chk"><input type="checkbox" id="ap-decisions" ${h.decisions !== false ? 'checked' : ''}><span>Also post decisions (accepted / waitlisted / denied)</span></label></div>
+        ${F.select('Post layout', 'applications.discordStyle', d.applications.discordStyle || 'columns', [['columns', 'Two columns (card)'], ['container', 'Container (one column)']])}${F.color('Side bar colour', 'applications.discordColor', d.applications.discordColor || '#f6cde5')}
+        <label class="chk"><input type="checkbox" id="ap-decisions" ${h.decisions !== false ? 'checked' : ''}><span>Also post updates (contracts sent &amp; signed, accepted / waitlisted / denied)</span></label></div>
       <div class="toolbar" style="margin-top:10px"><button class="btn sm primary" data-act="ap-hook-save">Save</button>${h.url ? '<button class="btn sm" data-act="ap-hook-test">Send test message</button><button class="btn sm danger" data-act="ap-hook-clear">Disconnect</button>' : ''}</div>
       <p class="hint">Discord → your applications channel → ⚙ Edit channel → Integrations → Webhooks → New webhook → Copy URL. It's stored in Firebase (not your public files). Signed-in applicants' browsers use it to post their application, so use a dedicated channel — if it's ever spammed, delete the webhook in Discord and paste a new one. To find a role ID for pings: Discord settings → Advanced → Developer Mode, then right-click the role → Copy ID.</p></div>` : '';
   return top + review + discord + builder;
@@ -855,9 +921,9 @@ function secPortal(d) {
       <div class="fgrid" style="margin-top:14px">
         <label class="fld"><span>Their Google email</span><input type="text" id="pt-m-email" placeholder="principal@gmail.com"></label>
         <label class="fld"><span>Name shown on articles</span><input type="text" id="pt-m-name"></label>
-        <label class="fld"><span>Role</span><input type="text" id="pt-m-role" list="pt-roles" value="Team principal"></label>
+        <label class="fld"><span>Role</span><select id="pt-m-role">${window.Portal.ROLES.map(r => `<option ${r === 'Team principal' ? 'selected' : ''}>${esc(r)}</option>`).join('')}</select></label>
         <label class="fld"><span>Team</span><select id="pt-m-team">${d.teams.map(t => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('')}<option value="">— None (press / media) —</option></select></label>
-      </div><datalist id="pt-roles">${window.Portal.ROLES.map(r => `<option value="${esc(r)}">`).join('')}</datalist>
+      </div>
       <div class="toolbar" style="margin-top:10px"><button class="btn sm primary" data-act="pt-add">+ Give access</button></div>
     </div>` + onBox;
 }
@@ -1105,12 +1171,17 @@ function render(sec) {
   return `<div class="page admin">
     <aside class="admin-side"><h4>Console</h4>
       ${me ? `<div class="side-who"><b>${esc(me.name)}</b><span>${me.owner ? 'Owner' : lim ? 'Admin team' : 'Admin team · passcode'} · <a href="javascript:void 0" data-team="signout">sign out</a></span></div>` : ''}
-      ${SECTIONS.filter(([k]) => allowed(k)).map(([k, l, ic]) => `<a class="side-link ${k === A.section ? 'active' : ''}" href="#/admin/${k}"><span class="ic">${ic}</span>${k === 'stewards' ? esc(LG.rcName(d)) : l}</a>`).join('')}
+      ${sortedSections(d).filter(([k]) => allowed(k)).map(([k, l, ic]) => `<a class="side-link ${k === A.section ? 'active' : ''}" href="#/admin/${k}"><span class="ic">${ic}</span>${k === 'stewards' ? esc(LG.rcName(d)) : l}</a>`).join('')}
       <div class="status-pill ${LG.S.isDraft ? 'draft' : 'clean'}">${LG.S.isDraft ? '● Unpublished changes' : '✓ All changes live'}${LG.S.isDraft ? '<button class="btn sm primary" data-act="publish">Publish</button>' : ''}</div>
     </aside>
     <section class="admin-main">${fn(d)}</section></div>`;
 }
 function noAccess() { return head('No access', 'The league owner hasn\'t given you access to this part of the console. Ask them to add it under <b>Admin team</b>.'); }
+function sortedSections(d) {
+  const lbl = ([k, l]) => (k === 'stewards' ? LG.rcName(d) : l).toLowerCase();
+  const first = SECTIONS.filter(x => x[0] === 'dashboard'), last = SECTIONS.filter(x => x[0] === 'publish');
+  return [...first, ...SECTIONS.filter(x => !['dashboard', 'publish'].includes(x[0])).sort((a, b) => lbl(a).localeCompare(lbl(b))), ...last];
+}
 const rerender = () => LG.render(false);
 const commit = () => { LG.saveDraft(); rerender(); };
 
@@ -1272,6 +1343,10 @@ document.addEventListener('click', async e => {
       r.sessions = P[b.dataset.k]; A.open['rnd-' + r.id] = true; return commit();
     }
     case 'adjust': return adjustExisting(b);
+    case 'combo-list': A.typing[b.dataset.pathK] = false; return rerender();
+    case 'drv-sort': ADS.sort = b.dataset.s; saveADS(); return rerender();
+    case 'drv-save-order': { const st = LG.computeStandings(d); const order = driverOrder(d, st); d.drivers = order.map(k => d.drivers[k]); ADS.sort = 'custom'; saveADS(); toast('Saved as your order — Publish to use it on the site'); return commit(); }
+    case 'drv-expand': case 'drv-collapse': document.querySelectorAll('#drv-list details.item').forEach(el => { if (!el.hidden) { el.open = b.dataset.act === 'drv-expand'; A.open[el.dataset.key] = el.open; } }); return;
     case 'apf-add': { const f = b.dataset.tpl === 'blank' ? { id: window.Apps.uidOf('form'), title: 'New application', description: '', open: false, questions: [{ id: window.Apps.uidOf('q'), label: 'Discord username', type: 'short', required: true, options: [], help: '' }] } : window.Apps.fromTemplate(b.dataset.tpl); d.applications.forms.push(f); A.open['apf-' + f.id] = true; toast('Form added — tick "Open" when it\'s ready, then Publish'); return commit(); }
     case 'apf-del': if (confirm('Delete this form? Applications already sent stay in Firebase.')) { d.applications.forms.splice(i, 1); commit(); } return;
     case 'apq-add': d.applications.forms[i].questions.push({ id: window.Apps.uidOf('q'), label: 'New question', type: 'short', required: false, options: [], help: '' }); return commit();
@@ -1283,12 +1358,13 @@ document.addEventListener('click', async e => {
       const note = (document.getElementById('ap-note-' + a.id) || {}).value || '', st = b.dataset.st, me = team(), who = me ? me.name : '';
       b.disabled = true;
       try {
-        await s.reviewApp(a.id, st, note.trim(), who);
+        const clear = !!b.dataset.clear;
+        await s.reviewApp(a.id, st, note.trim(), who, clear);
         if (st !== 'pending') window.Apps.notifyDecision(s, d, a, st, note.trim(), who);
-        Object.assign(a, { status: st, note: note.trim(), reviewer: who, reviewedAt: Date.now() });
-        toast({ accepted: 'Accepted ✓', waitlist: 'Waitlisted', denied: 'Denied', pending: 'Moved back to review' }[st] + ' — the applicant will see it on the site');
+        Object.assign(a, { status: st, note: note.trim(), reviewer: who, reviewedAt: Date.now() }, clear ? { signature: '', contract: '', signedAt: 0 } : {});
+        toast({ accepted: 'Accepted ✓', waitlist: 'Waitlisted', denied: 'Denied', pending: 'Moved back to review', offer: 'Contract sent 📜' }[st] + ' — the applicant will see it on the site');
         if (me) me.s.log('Application ' + st, `${a.applicant} · ${a.formTitle || ''}`, who).catch(() => { });
-      } catch (x) { toast('Could not save: ' + (x.code || x.message), 'err'); }
+      } catch (x) { toast('Could not save: ' + (x.code || x.message) + (/permission/.test(x.code || x.message) ? ' — Firebase still has the old rules. Copy the rules from Grid Draft ③ again and Publish them in Firebase (Firestore Database → Rules).' : ''), 'err'); }
       b.disabled = false; return rerender();
     }
     case 'ap-delete': {
@@ -1828,6 +1904,19 @@ document.addEventListener('click', async e => {
   rerender();
 });
 document.addEventListener('change', e => {
+  const el = e.target; if (!el.matches || !el.matches('select[data-combo]') || el.value !== '__type') return;
+  e.stopImmediatePropagation(); A.typing[el.dataset.path] = true; rerender();
+  setTimeout(() => { const i = document.querySelector(`[data-combo-input][data-path="${CSS.escape(el.dataset.path)}"]`); if (i) i.focus(); }, 30);
+}, true);
+document.addEventListener('input', e => {
+  if (e.target.id !== 'drv-q') return;
+  const q = e.target.value.trim().toLowerCase(); let n = 0;
+  document.querySelectorAll('#drv-list details.item').forEach(el => { const hit = !q || q.split(/\s+/).every(w => el.dataset.search.includes(w)); el.hidden = !hit; if (hit) n++; });
+  const none = document.querySelector('#drv-list .drv-none'); if (none) none.hidden = n > 0;
+});
+document.addEventListener('change', e => {
+  if (e.target.id === 'drv-team') { ADS.team = e.target.value; saveADS(); return rerender(); }
+  if (e.target.id === 'drv-show') { ADS.show = e.target.value; saveADS(); return rerender(); }
   if (e.target.id === 'ap-form-filter') { APA.form = e.target.value; return rerender(); }
   if (e.target.id === 'ac-all') document.querySelectorAll('.ac-sec').forEach(x => { x.disabled = e.target.checked; if (e.target.checked) x.checked = true; });
 });
