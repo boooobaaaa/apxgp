@@ -493,3 +493,35 @@ a.race-row.has-results:hover { border-color: var(--accent); transform: translate
 .race-fl { margin-top: 4px; font-size: .78rem; color: #b27cf0; font-weight: 600; }
 :root[data-theme="light"] .race-fl { color: #6a1fb0; }
 .standings-note { margin: 0 0 12px; }
+
+/* ===== Category switch (APX GP | Endurance) ===== */
+.cat-switch { display: inline-flex; padding: 3px; border-radius: 99px; background: var(--panel); border: 1px solid var(--line); flex-shrink: 0; }
+.cat-switch button { border: 0; background: none; color: var(--muted); font-weight: 800; font-size: .74rem; letter-spacing: .06em; text-transform: uppercase; padding: 6px 12px; border-radius: 99px; cursor: pointer; white-space: nowrap; transition: background .2s, color .2s; }
+.cat-switch button:hover { color: var(--text); }
+.cat-switch button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+@media (max-width: 1180px) { .nav-inner { gap: 14px; } .nav-links a { padding: 8px 9px; font-size: .86rem; } }
+@media (max-width: 1020px) { .cat-switch { margin-left: auto; } .nav-account { margin-left: 0; } }
+@media (max-width: 520px) { .cat-switch button { padding: 5px 8px; font-size: .64rem; letter-spacing: .02em; } .admin-btn { display: none; } .brand img { height: 18px; } }
+.end-tag { display: inline-block; vertical-align: middle; font-size: .62em; letter-spacing: .12em; padding: 3px 10px; border-radius: 4px; background: var(--accent); color: #fff; font-style: normal; }
+.cat-badge { font-size: .7rem; font-weight: 800; text-transform: uppercase; letter-spacing: .08em; color: var(--accent-ink); }
+
+/* ===== Endurance ===== */
+.class-badge { display: inline-block; font-size: .68rem; font-weight: 900; letter-spacing: .06em; text-transform: uppercase; padding: 3px 9px; border-radius: 4px; color: #fff; background: var(--cc); white-space: nowrap; }
+.class-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--cc); margin-right: 6px; vertical-align: middle; }
+.class-block { margin-bottom: 28px; }
+.class-title { margin: 0 0 10px; }
+.class-title .class-badge { font-size: .85rem; padding: 5px 12px; }
+.car-num { display: inline-block; min-width: 34px; font-weight: 900; font-style: italic; color: var(--accent-ink); }
+.mult-tag { display: inline-block; font-size: .66rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; border-radius: 99px; background: color-mix(in srgb, var(--accent) 25%, transparent); color: var(--accent-ink); vertical-align: middle; }
+.page-head .lede .mult-tag { font-size: .7rem; }
+.pole-tag { background: #2a7fff; }
+.end-results td { vertical-align: middle; }
+#clsTabs { flex-wrap: wrap; }
+.nav-mobile-acct .mobile-admin { display: none; }
+@media (max-width: 520px) { .nav-mobile-acct .mobile-admin { display: block; } }
+/* line the columns up across every class table */
+.class-block .standings { table-layout: fixed; }
+.class-block .standings th:nth-child(1) { width: 64px; }
+.class-block .standings th:nth-child(2) { width: 22%; }
+.class-block .standings th.num { width: 70px; }
+@media (min-width: 641px) { .class-block .standings th:nth-child(3) { width: 28%; } }

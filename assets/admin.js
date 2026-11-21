@@ -5,7 +5,9 @@
  */
 'use strict';
 
+const ADMIN_CAT = () => { try { return localStorage.getItem('apx_admin_cat') === 'endurance' ? 'endurance' : 'gp'; } catch { return 'gp'; } };
 const A = {
+  cat: ADMIN_CAT(),
   data: null, baseText: '', baseSha: '', gh: null,
   previews: new Map(),   // path -> blob URL (so new images show before Pages rebuilds)
   pending: new Map(),    // path -> Blob (new images not yet committed)
@@ -78,7 +80,7 @@ const GH = {
     });
   },
   async publish(message, onStep) {
-    migrateData(A.data); // keep names in results in step with Drivers & Teams
+    migrateData(A.data); migrateEndurance(A.data); // keep names in results in step with the rosters
     A.data._rev = { id: Math.random().toString(36).slice(2, 10), at: new Date().toISOString() };
     const json = JSON.stringify(A.data, null, 2) + '\n';
     onStep('Checking for changes made elsewhere…');
@@ -134,6 +136,7 @@ function normalise(d) {
   // card packs were removed from the site — tidy away their old data
   delete d.cards; delete d.packs; delete d.settings.starting_coins; delete d.settings.daily_coins;
   migrateData(d); // roster (Drivers & Teams) + points system; standings are now calculated
+  migrateEndurance(d); // Endurance category: entry list, races, points
 }
 
 // ================================================================ images
@@ -387,6 +390,17 @@ function changeSummary() {
     const bits = [added && `${added} added`, edited && `${edited} edited`, removed && `${removed} removed`].filter(Boolean);
     if (bits.length) parts.push(`${label} (${bits.join(', ')})`);
   }
+  {
+    const before = new Map((base.endurance?.races || []).map((r) => [r.id, JSON.stringify(r)]));
+    let added = 0, edited = 0;
+    for (const r of A.data.endurance?.races || []) { if (!before.has(r.id)) added++; else if (before.get(r.id) !== JSON.stringify(r)) edited++; before.delete(r.id); }
+    const bits = [added && `${added} added`, edited && `${edited} edited`, before.size && `${before.size} removed`].filter(Boolean);
+    if (bits.length) parts.push(`Endurance races (${bits.join(', ')})`);
+    if (JSON.stringify(base.endurance?.grid || null) !== JSON.stringify(A.data.endurance?.grid || null) && base.endurance) parts.push('Endurance Drivers & Teams');
+    if (JSON.stringify(base.endurance?.points || null) !== JSON.stringify(A.data.endurance?.points || null) && base.endurance) parts.push('Endurance Points');
+    if (JSON.stringify(base.grid || null) !== JSON.stringify(A.data.grid || null)) parts.push('Drivers & Teams');
+    if (JSON.stringify(base.points || null) !== JSON.stringify(A.data.points || null)) parts.push('Points System');
+  }
   const { _rev: _a, ...sNow } = A.data.settings || {};
   if (JSON.stringify(sNow) !== JSON.stringify(base.settings || {})) parts.push('Site settings');
   return parts.length ? `Update ${parts.join(', ')}` : 'Update site content';
@@ -577,6 +591,7 @@ async function adjustExisting(path, aspect) {
 }
 
 // ================================================================ sections
+const CAT_OPTS = () => [['', 'Both categories'], ['gp', A.data.settings.short_name || 'APX GP'], ['endurance', 'Endurance']];
 const SECTIONS = {
   dashboard: { title: 'Dashboard', icon: '◧' },
   settings: { title: 'Site Settings', icon: '⚙' },
@@ -584,10 +599,11 @@ const SECTIONS = {
     title: 'Team Members', icon: '👤', res: 'members', singular: 'Member', idp: 'm',
     help: 'Everyone shown on the Team page. Mark drivers so they appear on the home page and in Compare. Sort order controls the carousel order.',
     sort: (a, b) => (Number(a.sort) || 0) - (Number(b.sort) || 0),
-    cols: [['photo', 'thumb'], ['name'], ['role'], ['number', 'No.'], ['is_driver', 'Driver', 'bool'], ['sort', 'Order']],
+    cols: [['photo', 'thumb'], ['name'], ['role'], ['number', 'No.'], ['is_driver', 'Driver', 'bool'], ['category', 'Shown In', 'cat'], ['sort', 'Order']],
     fields: () => [
       { k: 'name', label: 'Full name', req: true }, { k: 'role', label: 'Role / title', ph: 'Race Driver, Team Principal…' },
       { k: 'is_driver', label: 'This person is a driver', type: 'check' },
+      { k: 'category', label: 'Shown in', type: 'select', opts: CAT_OPTS(), half: true },
       { k: 'number', label: 'Car number', half: true }, { k: 'sort', label: 'Sort order', type: 'number', half: true },
       { k: 'nationality', label: 'Nationality', half: true }, { k: 'hometown', label: 'Hometown', half: true },
       { k: 'birthdate', label: 'Date of birth', type: 'date', half: true }, { k: 'photo', label: 'Photo', type: 'image', aspect: '4:5' },
@@ -597,7 +613,7 @@ const SECTIONS = {
     ],
   },
   races: {
-    title: 'Race Schedule', icon: '🏁', res: 'races', singular: 'Race', idp: 'r',
+    title: 'Race Schedule', icon: '🏁', res: 'races', singular: 'Race', idp: 'r', perCat: true,
     help: 'Add each race to the calendar, then use Add Results after the weekend. Entering results marks the race completed, writes the summary line and updates every driver\'s stats.',
     sort: (a, b) => String(a.date || '').localeCompare(String(b.date || '')) || (a.round || 0) - (b.round || 0),
     cols: [['round', 'Rnd'], ['name'], ['date', 'Date', 'date'], ['status', 'Status', 'status'], ['results', 'Results', 'results'], ['result', 'Summary']],
@@ -610,25 +626,59 @@ const SECTIONS = {
       { k: 'result', label: 'Result summary', ph: 'P1 Mercer · P4 Ruiz' },
     ],
   },
-  grid: { title: 'Drivers & Teams', icon: '🏎', help: 'Every team and driver on the grid. These names fill the dropdowns when you enter race results — the championship standings are calculated from those results automatically.' },
-  points: { title: 'Points System', icon: '🔢', help: 'How many points each finishing position is worth, plus the fastest-lap bonus. Changes recalculate the standings and every driver\'s stats instantly.' },
+  grid: { perCat: true, title: 'Drivers & Teams', icon: '🏎', help: 'Every team and driver on the grid. These names fill the dropdowns when you enter race results — the championship standings are calculated from those results automatically.' },
+  points: { perCat: true, title: 'Points System', icon: '🔢', help: 'How many points each finishing position is worth, plus the fastest-lap bonus. Changes recalculate the standings and every driver\'s stats instantly.' },
   news: {
     title: 'News', icon: '📰', res: 'news', singular: 'Article', idp: 'n',
     help: 'Drafts stay hidden on the site. Tick Published to put an article live. Body formatting: ## headings, **bold**, *italic*, - lists, > quotes, [links](https://…) and images via "Insert image".',
     sort: (a, b) => String(b.published_at || '').localeCompare(String(a.published_at || '')),
-    cols: [['cover', 'thumb'], ['title'], ['published', 'Live', 'bool'], ['published_at', 'Date', 'date'], ['author']],
+    cols: [['cover', 'thumb'], ['title'], ['published', 'Live', 'bool'], ['category', 'Shown In', 'cat'], ['published_at', 'Date', 'date'], ['author']],
     fields: () => [
       { k: 'title', label: 'Headline', req: true }, { k: 'excerpt', label: 'Summary (shown on cards)', type: 'textarea', rows: 2 },
       { k: 'cover', label: 'Cover image', type: 'image', aspect: '16:9' },
       { k: 'body', label: 'Article body', type: 'markdown', rows: 14, uploadInsert: true },
       { k: 'author', label: 'Author', half: true }, { k: 'published_at', label: 'Publish date', type: 'datetime-local', half: true },
       { k: 'slug', label: 'URL slug (auto-generated if blank)', half: true },
+      { k: 'category', label: 'Shown in', type: 'select', opts: CAT_OPTS(), half: true },
       { k: 'published', label: 'Published (visible on site)', type: 'check' },
     ],
   },
   media: { title: 'Media Library', icon: '🖼', help: 'Add photos for the Media page, then use ✎ Adjust to crop, rotate or brighten any of them. Group photos with albums — the site shows album filters automatically.' },
   fans: { title: 'Admins', icon: '👥', help: 'Who can sign in to this console, and the GitHub connection used for publishing.' },
 };
+
+// Endurance versions of the category-specific pages
+const END_SECTIONS = {
+  races: {
+    title: 'Race Schedule', icon: '🏁', singular: 'Race', idp: 'er', coll: () => A.data.endurance.races,
+    help: 'The Endurance calendar. After each race, click Add Results and enter the classification by car. Saving marks the race completed, writes its summary line and updates the per-class championships.',
+    sort: (a, b) => String(a.date || '').localeCompare(String(b.date || '')) || (a.round || 0) - (b.round || 0),
+    cols: [['round', 'Rnd'], ['name'], ['date', 'Date', 'date'], ['duration', 'Length'], ['multiplier', 'Points', 'mult'], ['status', 'Status', 'status'], ['results', 'Results', 'endresults'], ['result', 'Summary']],
+    extraAction: (r) => `<button class="btn btn-sm btn-primary" data-results="${esc(r.id)}">${r.results ? 'Edit Results' : 'Add Results'}</button>`,
+    openResults: (id) => openEndResults(A.data.endurance.races.find((r) => r.id === id)),
+    fields: () => [
+      { k: 'name', label: 'Race name', req: true, ph: '6 Hours of Spa' }, { k: 'round', label: 'Round', type: 'number', half: true },
+      { k: 'status', label: 'Status', type: 'select', half: true, opts: [['upcoming', 'Upcoming'], ['completed', 'Completed']] },
+      { k: 'circuit', label: 'Circuit', half: true }, { k: 'country', label: 'Country', half: true },
+      { k: 'date', label: 'Race date', type: 'date', half: true }, { k: 'time', label: 'Start time (local)', type: 'time', half: true },
+      { k: 'duration', label: 'Race length', half: true, ph: '6 Hours, 1000 Miles, 24 Hours…' },
+      { k: 'multiplier', label: 'Points for this race', type: 'select', half: true, opts: [['1', 'Normal points'], ['1.5', '1.5× points'], ['2', 'Double points (e.g. Le Mans)']] },
+      { k: 'result', label: 'Result summary (written automatically when you save results)', ph: '#7 P1 Hypercar · #22 P2 LMP2' },
+    ],
+  },
+};
+const isEndCat = () => A.cat === 'endurance';
+function setAdminCat(cat) {
+  A.cat = cat;
+  try { localStorage.setItem('apx_admin_cat', cat); } catch { /* ignore */ }
+  renderAdminCat(); route();
+}
+function renderAdminCat() {
+  const el = $('#admCat'); if (!el) return;
+  el.innerHTML = CATEGORIES.map((c) => `<button type="button" data-cat="${c.key}" aria-pressed="${A.cat === c.key}">${c.key === 'gp' ? esc(A.data.settings.short_name || c.label) : c.label}</button>`).join('');
+  el.onclick = (e) => { const b = e.target.closest('[data-cat]'); if (b && b.dataset.cat !== A.cat) setAdminCat(b.dataset.cat); };
+  $$('#side a').forEach((a) => { const sec = SECTIONS[a.dataset.s]; a.classList.toggle('per-cat', !!sec?.perCat); });
+}
 
 // ================================================================ boot / login
 // Two modes:
@@ -808,6 +858,7 @@ function shell() {
   root.innerHTML = `<div class="adm">
     <aside class="adm-side">
       <a class="brand" href="${esc(site)}" title="Back to the site">${brandHtml()}</a>
+      <div class="adm-cat-wrap"><span class="muted small">Racing category</span><div class="cat-switch adm-cat" id="admCat" role="group" aria-label="Racing category"></div></div>
       <nav id="side">${Object.entries(SECTIONS).map(([k, s]) => `<a href="#${k}" data-s="${k}"><i>${s.icon}</i>${s.title}</a>`).join('')}</nav>
       <div id="liveStatus" class="live-status"></div>
       <div class="adm-user"><span class="muted small">${Auth.enabled ? 'Signed in as' : 'Connected to'}</span><b>${esc(Auth.enabled ? (Auth.state.profile?.username || Auth.state.user?.email || '') : `${A.gh.owner}/${A.gh.repo}`)}</b>
@@ -835,6 +886,7 @@ function shell() {
     A.data = JSON.parse(A.baseText); normalise(A.data); A.pending.clear(); setDirty(false); applyTheme(); route();
   };
   wireThemeBtn();
+  renderAdminCat();
   checkLiveOnOpen();
   setInterval(renderLive, 1000);
   window.onhashchange = route;
@@ -918,6 +970,12 @@ function route() {
   main.oninput = main.onchange = main.onclick = null;
   try {
     const s = SECTIONS[A.section];
+    if (isEndCat() && s.perCat) {
+      if (A.section === 'races') listView(main, END_SECTIONS.races);
+      else if (A.section === 'grid') endGridView(main);
+      else if (A.section === 'points') endPointsView(main);
+      return;
+    }
     if (A.section === 'dashboard') dashboard(main);
     else if (A.section === 'settings') settingsView(main);
     else if (A.section === 'media') mediaView(main);
@@ -928,7 +986,7 @@ function route() {
   } catch (e) { console.error(e); main.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
 }
 
-const head = (s, actions = '') => `<div class="adm-head"><div><h1>${s.title}</h1>${s.help ? `<p class="muted small">${esc(s.help)}</p>` : ''}</div><div class="adm-actions">${actions}</div></div>`;
+const head = (s, actions = '') => `<div class="adm-head"><div><h1>${s.title}${(s.perCat || s.coll || s.endPage) ? ` <span class="cat-chip">${isEndCat() ? 'Endurance' : esc(A.data.settings.short_name || 'APX GP')}</span>` : ''}</h1>${s.help ? `<p class="muted small">${esc(s.help)}</p>` : ''}</div><div class="adm-actions">${actions}</div></div>`;
 
 // ================================================================ dashboard
 function dashboard(main) {
@@ -936,7 +994,7 @@ function dashboard(main) {
   const drafts = d.news.filter((n) => !n.published).length;
   const tiles = [['members', 'Team Members', d.members.length], ['races', 'Races', d.races.length],
     ['news', 'Articles', `${d.news.length}${drafts ? ` <small>(${drafts} draft${drafts > 1 ? 's' : ''})</small>` : ''}`],
-    ['media', 'Photos', d.media.length]];
+    ['media', 'Photos', d.media.length], ['races', 'Endurance races', d.endurance.races.length]];
   main.innerHTML = `${head({ title: 'Dashboard' })}
   <div class="dash-tiles">${tiles.map(([k, l, v]) => `<a class="dash-tile" href="#${k}"><b>${v}</b><span>${l}</span></a>`).join('')}</div>
   <div class="dash-cols">
@@ -989,8 +1047,9 @@ function settingsView(main) {
 }
 
 // ================================================================ generic list
+const coll = (s) => (s.coll ? s.coll() : A.data[s.res]);
 function listView(main, s) {
-  const rows = s.sort ? [...A.data[s.res]].sort(s.sort) : A.data[s.res];
+  const rows = s.sort ? [...coll(s)].sort(s.sort) : coll(s);
   let actions = `<button class="btn btn-primary" id="new">+ New ${s.singular}</button>`;
   if (s.standings) actions = `<button class="btn btn-ghost" id="reorder" title="Re-number positions by points">Auto-Rank by Points</button>` + actions;
 
@@ -1000,11 +1059,11 @@ function listView(main, s) {
       : `<div class="empty panel">Nothing here yet. <button class="btn btn-primary btn-sm" id="new2">Add the First ${s.singular}</button></div>`;
   main.innerHTML = head(s, actions) + body;
   $('#new').onclick = () => openForm(s, null);
-  $$('[data-results]', main).forEach((b) => (b.onclick = () => openResults(A.data.races.find((r) => r.id === b.dataset.results))));
+  $$('[data-results]', main).forEach((b) => (b.onclick = () => (s.openResults ? s.openResults(b.dataset.results) : openResults(A.data.races.find((r) => r.id === b.dataset.results)))));
   $('#new2')?.addEventListener('click', () => openForm(s, null));
-  $$('[data-edit]', main).forEach((b) => (b.onclick = () => openForm(s, A.data[s.res].find((r) => r.id === b.dataset.edit))));
+  $$('[data-edit]', main).forEach((b) => (b.onclick = () => openForm(s, coll(s).find((r) => r.id === b.dataset.edit))));
   $$('[data-del]', main).forEach((b) => (b.onclick = async () => {
-    const list = A.data[s.res], r = list.find((x) => x.id === b.dataset.del);
+    const list = coll(s), r = list.find((x) => x.id === b.dataset.del);
     if (!(await uiConfirm(`"${r.name || r.title || r.driver || r.team}" will be removed when you publish.`, { title: `Delete This ${s.singular}?`, ok: 'Delete', danger: true }))) return;
     list.splice(list.indexOf(r), 1);
     setDirty(); toast('Deleted — publish to make it live', 'ok'); route();
@@ -1023,6 +1082,9 @@ function cell(v, type) {
     if (!v) return '<span class="muted">—</span>';
     return SESSIONS.filter((x) => (v[x.key] || []).length).map((x) => `<span class="pill res-pill">${x.short}</span>`).join(' ');
   }
+  if (type === 'cat') return v === 'endurance' ? '<span class="pill">Endurance</span>' : v === 'gp' ? `<span class="pill">${esc(A.data.settings.short_name || 'APX GP')}</span>` : '<span class="muted small">Both</span>';
+  if (type === 'mult') { const m = Number(v) || 1; return m === 1 ? '<span class="muted">Normal</span>' : `<span class="pill pill-up">${m === 2 ? 'Double' : `${m}×`}</span>`; }
+  if (type === 'endresults') return v ? END_SESSIONS.filter((x) => (v[x.key] || []).length).map((x) => `<span class="pill res-pill">${x.label}</span>`).join(' ') : '<span class="muted">—</span>';
   if (type === 'status') return `<span class="pill ${v === 'completed' ? '' : 'pill-up'}">${esc(v || 'upcoming')}</span>`;
   const s = String(v ?? '');
   return esc(s.length > 60 ? s.slice(0, 60) + '…' : s);
@@ -1162,7 +1224,7 @@ function openForm(s, row) {
       if (row) {
         for (const f of fields) if (!(f.k in body) && f.type !== 'stats') delete row[f.k];
         Object.assign(row, body);
-      } else A.data[s.res].push({ id: newId(s.idp), ...body });
+      } else coll(s).push({ id: newId(s.idp), ...body });
       setDirty(); closeDrawer(); route();
       toast('Saved — press Publish to put it live', 'ok');
     } catch (err) { toast(err.message, 'err'); }
@@ -1189,6 +1251,7 @@ function mediaView(main) {
     <img src="${esc(src(m.file))}" alt="" loading="lazy">
     <input data-f="caption" value="${esc(m.caption || '')}" placeholder="Caption">
     <input data-f="album" value="${esc(m.album || '')}" placeholder="Album" list="albums">
+    <select data-f="category" title="Shown in">${CAT_OPTS().map(([v, l]) => `<option value="${v}" ${(m.category || '') === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
     <div class="adm-m-actions"><button class="btn btn-sm btn-ghost" data-adj>✎ Adjust</button><button class="btn btn-sm btn-ghost" data-copy="${esc(m.file)}">Copy path</button><button class="btn btn-sm btn-ghost danger" data-del>Delete</button></div>
   </div>`).join('') || '<p class="muted">No photos yet.</p>'}</div>`;
 
@@ -1215,7 +1278,7 @@ function mediaView(main) {
   drop.addEventListener('drop', (e) => add(e.dataTransfer.files));
   $$('.adm-m').forEach((el) => {
     const m = A.data.media.find((x) => x.id === el.dataset.id);
-    $$('input[data-f]', el).forEach((i) => (i.onchange = () => { const v = i.value.trim(); if (v) m[i.dataset.f] = v; else delete m[i.dataset.f]; setDirty(); }));
+    $$('input[data-f], select[data-f]', el).forEach((i) => (i.onchange = () => { const v = i.value.trim(); if (v) m[i.dataset.f] = v; else delete m[i.dataset.f]; setDirty(); }));
     $('[data-adj]', el).onclick = async () => {
       try { const p = await adjustExisting(m.file, 'free'); if (p) { m.file = p; setDirty(); toast('Photo updated — press Publish to put it live', 'ok'); route(); } }
       catch (err) { toast(err.message, 'err'); }
@@ -1322,6 +1385,240 @@ function pointsView(main) {
     }
   };
   example();
+}
+
+// ================================================================ ENDURANCE: results editor (by car)
+function endRaceSummary(race) {
+  const E = A.data.endurance, ours = new Set(E.grid.teams.filter((t) => t.is_ours).map((t) => normName(t.name)));
+  return withClassPos(race.results?.race || []).filter((r) => ours.has(normName(r.t)))
+    .map((r) => `#${r.n} ${(r.st || 'fin') === 'fin' ? `P${r.classPos}` : STATUS[r.st]} ${r.cln || ''}`.trim()).join(' · ');
+}
+function openEndResults(race) {
+  const E = A.data.endurance, G = E.grid;
+  const work = JSON.parse(JSON.stringify(race.results || {}));
+  let cur = (work.race || []).length ? 'race' : 'quali';
+  const car = (id) => G.cars.find((c) => c.id === id);
+  const team = (id) => G.teams.find((t) => t.id === id);
+  const drv = (id) => G.drivers.find((d) => d.id === id);
+  const ourTeams = new Set(G.teams.filter((t) => t.is_ours).map((t) => t.id));
+  // fill a row from an entry-list car (number, team, class and its usual driver lineup)
+  const fromCar = (x, id) => {
+    const c = car(id); if (!c) return;
+    x.ci = c.id; x.n = c.number; x.ti = c.team_id; x.t = team(c.team_id)?.name || ''; x.cl = c.class_id; x.cln = endClass(E, c.class_id)?.name || '';
+    x.dri = [...(c.drivers || [])]; x.dr = x.dri.map((d) => drv(d)?.name).filter(Boolean);
+  };
+  const carLabel = (c) => `#${c.number || '?'} — ${team(c.team_id)?.name || 'No team'}`;
+  const carOptions = (sel) => `<option value="">— Choose Car —</option>${G.classes.map((cl) => {
+    const cars = G.cars.filter((c) => c.class_id === cl.id); if (!cars.length) return '';
+    return `<optgroup label="${esc(cl.name)}">${cars.map((c) => `<option value="${esc(c.id)}" ${c.id === sel ? 'selected' : ''}>${esc(carLabel(c))}</option>`).join('')}</optgroup>`;
+  }).join('')}${G.cars.filter((c) => !endClass(E, c.class_id)).map((c) => `<option value="${esc(c.id)}" ${c.id === sel ? 'selected' : ''}>${esc(carLabel(c))}</option>`).join('')}`;
+
+  const panel = $('#drawerPanel');
+  panel.classList.add('wide');
+  const rowsNow = () => (work[cur] = work[cur] || []);
+  const render = () => {
+    const isRace = cur === 'race', rows = rowsNow(), withPos = withClassPos(rows.map((x) => (isRace ? x : { ...x, st: 'fin' })));
+    const poles = endPoles({ results: work }), P = E.points || DEFAULT_END_POINTS;
+    const other = cur === 'race' ? 'quali' : 'race';
+    panel.innerHTML = `<form id="rf" novalidate>
+      <div class="drawer-head"><h2>Results — ${esc(race.name)} <span class="cat-chip">Endurance</span></h2><button type="button" class="x" data-a="close" aria-label="Close">×</button></div>
+      <div class="drawer-body">
+        <div class="tabs res-tabs">${END_SESSIONS.map((s) => `<button type="button" class="tab" data-s="${s.key}" aria-selected="${s.key === cur}">${s.label}${(work[s.key] || []).length ? ` <small>${work[s.key].length}</small>` : ''}</button>`).join('')}</div>
+        ${G.cars.length ? '' : '<div class="alert">Your entry list is empty. Add classes, teams, drivers and cars under <a href="#grid">Drivers &amp; Teams</a> (with Endurance selected) first.</div>'}
+        <div class="res-tools">
+          ${(work[other] || []).length ? `<button type="button" class="btn btn-sm btn-ghost" data-a="copy">Copy Order From ${other === 'race' ? 'Race' : 'Qualifying'}</button>` : ''}
+          ${G.cars.length ? '<button type="button" class="btn btn-sm btn-ghost" data-a="all">Fill With Entry List</button>' : ''}
+          <button type="button" class="btn btn-sm btn-ghost" data-a="paste">Paste Car Numbers</button>
+          ${rows.length ? '<button type="button" class="btn btn-sm btn-ghost danger" data-a="clear">Clear Session</button>' : ''}
+          ${isRace ? `<span class="muted small">Points: ${Number(race.multiplier) && Number(race.multiplier) !== 1 ? `<b>${race.multiplier}×</b> this race` : 'normal'} · class pole +${Number(P.pole) || 0}</span>` : ''}
+        </div>
+        ${rows.length ? `<div class="table-wrap"><table class="adm-table res-table end-res-table">
+          <thead><tr><th>Pos</th><th>Car</th><th>Class</th><th>Drivers <span class="muted">(this race)</span></th>${isRace ? '<th>Laps</th>' : ''}<th>${isRace ? 'Time / Gap' : 'Best Lap'}</th>${isRace ? '<th>Status</th><th>Pts</th>' : ''}<th></th></tr></thead>
+          <tbody>${rows.map((x, i) => {
+            const p = withPos[i], mine = ourTeams.has(x.ti), cl = endClass(E, x.cl);
+            const pts = isRace ? round1(endRacePoints(race, x, p.classPos, P) + (poles.has(carKey(x)) ? Number(P.pole) || 0 : 0)) : 0;
+            const avail = G.drivers.filter((d) => !(x.dri || []).includes(d.id));
+            return `<tr data-i="${i}" class="${mine ? 'mine' : ''}">
+              <td class="pos">${i + 1}</td>
+              <td><select data-f="ci">${carOptions(x.ci)}${!x.ci && x.n ? `<option value="" selected>#${esc(x.n)} ${esc(x.t || '')}</option>` : ''}</select></td>
+              <td class="nowrap">${cl ? `<span class="class-badge" style="--cc:${esc(cl.color || '#888')}">${esc(cl.name)}</span>` : '<span class="muted">—</span>'}${p.classPos ? ` <small class="muted">P${p.classPos}</small>` : ''}${!isRace && p.classPos === 1 ? ' <small class="pole-mini">POLE</small>' : ''}</td>
+              <td><div class="lineup">${(x.dri || []).map((id, k) => `<span class="lineup-chip">${esc(drv(id)?.name || x.dr?.[k] || '?')}<button type="button" data-rmd="${k}" title="Remove from this race">×</button></span>`).join('')}
+                ${x.ci && avail.length ? `<select data-f="addd" class="add-driver"><option value="">+ driver</option>${avail.map((d) => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}</select>` : ''}</div></td>
+              ${isRace ? `<td><input data-f="laps" value="${esc(x.laps ?? '')}" inputmode="numeric" class="laps-in" placeholder="0"></td>` : ''}
+              <td><input data-f="time" value="${esc(x.time || '')}" class="mono" placeholder="${isRace ? (i ? '+12.448' : '6:00:41.112') : '2:01.502'}"></td>
+              ${isRace ? `<td><select data-f="st">${Object.entries(STATUS).map(([k, l]) => `<option value="${k}" ${(x.st || 'fin') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td><td class="pts">${pts || ''}</td>` : ''}
+              <td class="row-actions"><button type="button" class="btn btn-sm btn-ghost" data-mv="-1" ${i ? '' : 'disabled'}>↑</button><button type="button" class="btn btn-sm btn-ghost" data-mv="1" ${i < rows.length - 1 ? '' : 'disabled'}>↓</button><button type="button" class="btn btn-sm btn-ghost danger" data-a="del">✕</button></td>
+            </tr>`;
+          }).join('')}</tbody></table></div>` : `<div class="empty panel small">No ${cur === 'race' ? 'race' : 'qualifying'} results yet. Add cars one by one, fill with the entry list, or paste car numbers.</div>`}
+        <button type="button" class="btn btn-ghost btn-sm add-row" data-a="add">+ Add Car</button>
+        <p class="small muted res-help">List cars in <b>overall</b> order — positions inside each class are worked out for you. Drivers default to the car's usual lineup; remove or add drivers for this race if it changed. Every driver in the lineup scores the car's points.</p>
+      </div>
+      <div class="drawer-foot"><span class="grow"></span><button type="button" class="btn btn-ghost" data-a="close">Cancel</button><button class="btn btn-primary">Save Results</button></div>
+    </form>`;
+  };
+  panel.oninput = (e) => {
+    const tr = e.target.closest('tr[data-i]'), f = e.target.dataset.f;
+    if (tr && (f === 'time' || f === 'laps')) { const x = rowsNow()[Number(tr.dataset.i)]; const v = e.target.value.trim(); if (v) x[f] = f === 'laps' && /^\d+$/.test(v) ? Number(v) : v; else delete x[f]; }
+  };
+  panel.onchange = (e) => {
+    const tr = e.target.closest('tr[data-i]'); if (!tr) return;
+    const x = rowsNow()[Number(tr.dataset.i)], f = e.target.dataset.f;
+    if (f === 'ci') { Object.keys(x).forEach((k) => { if (!['laps', 'time', 'st'].includes(k)) delete x[k]; }); fromCar(x, e.target.value); return render(); }
+    if (f === 'addd' && e.target.value) { x.dri = [...(x.dri || []), e.target.value]; x.dr = x.dri.map((id) => drv(id)?.name).filter(Boolean); return render(); }
+    if (f === 'st') { if (e.target.value === 'fin') delete x.st; else x.st = e.target.value; return render(); }
+  };
+  panel.onclick = async (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    const tr = b.closest('tr[data-i]'), i = tr ? Number(tr.dataset.i) : -1, rows = rowsNow();
+    if (b.dataset.s) { cur = b.dataset.s; return render(); }
+    if (b.dataset.mv) { const j = i + Number(b.dataset.mv); [rows[i], rows[j]] = [rows[j], rows[i]]; return render(); }
+    if (b.dataset.rmd !== undefined) { rows[i].dri.splice(Number(b.dataset.rmd), 1); rows[i].dr = rows[i].dri.map((id) => drv(id)?.name).filter(Boolean); return render(); }
+    switch (b.dataset.a) {
+      case 'close': return closeDrawer();
+      case 'del': rows.splice(i, 1); return render();
+      case 'add': rows.push({}); render(); $$('#rf tr[data-i] select[data-f="ci"]').pop()?.focus(); return;
+      case 'copy': { const other = cur === 'race' ? 'quali' : 'race'; work[cur] = (work[other] || []).map((x) => { const y = {}; if (x.ci) fromCar(y, x.ci); else Object.assign(y, { n: x.n, t: x.t, cl: x.cl, cln: x.cln }); y.dri = [...(x.dri || y.dri || [])]; y.dr = [...(x.dr || y.dr || [])]; return y; }); toast('Order copied — now adjust it', 'ok'); return render(); }
+      case 'all': work[cur] = G.classes.flatMap((cl) => G.cars.filter((c) => c.class_id === cl.id)).concat(G.cars.filter((c) => !endClass(E, c.class_id))).map((c) => { const y = {}; fromCar(y, c.id); return y; }); toast('Filled with every car on the entry list — now put them in order', 'ok'); return render();
+      case 'clear': if (await uiConfirm('All rows in this session will be removed.', { title: 'Clear This Session?', ok: 'Clear', danger: true })) { work[cur] = []; render(); } return;
+      case 'paste': {
+        const txt = await textDialog('Paste Car Numbers', 'One car per line, in overall finishing order. Add laps and time/gap after commas or tabs if you like, e.g. "7, 143, 6:00:41.112". Cars are matched to your entry list by number.', '7, 143, 6:00:41.112\n8, 143, +12.448\n22, 138, +5 Laps');
+        if (!txt) return;
+        let miss = 0;
+        const add = txt.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => {
+          const [num, laps, time] = l.split(/\t|,|;/).map((p) => p.trim());
+          const c = G.cars.find((k) => String(k.number).replace(/^#/, '') === String(num).replace(/^#|^P\d+\s*/gi, '').replace(/^#/, ''));
+          const y = {}; if (c) fromCar(y, c.id); else { miss++; y.n = String(num).replace(/^#/, ''); }
+          if (laps && /^\d+$/.test(laps)) y.laps = Number(laps); else if (laps && !time) y.time = laps;
+          if (time) y.time = time;
+          return y;
+        });
+        work[cur] = rows.filter((r) => r.ci).concat(add);
+        toast(`Added ${add.length} cars${miss ? ` — ${miss} number${miss > 1 ? 's weren\'t' : ' wasn\'t'} on the entry list; pick the car for ${miss > 1 ? 'those rows' : 'that row'}` : ''}`, miss ? 'err' : 'ok');
+        return render();
+      }
+    }
+  };
+  panel.onsubmit = (e) => {
+    e.preventDefault();
+    const clean = {};
+    for (const s of END_SESSIONS) { const rows = (work[s.key] || []).filter((x) => x.ci); if (rows.length) clean[s.key] = rows; }
+    if (Object.keys(clean).length) race.results = clean; else delete race.results;
+    if (clean.race) { race.status = 'completed'; const sum = endRaceSummary(race); if (sum) race.result = sum; }
+    setDirty(); closeDrawer(); route();
+    toast('Results saved — Endurance standings are updated. Press Publish to Site to put them live.', 'ok');
+  };
+  render();
+  $('#drawer').hidden = false; document.body.classList.add('modal-open');
+}
+
+// ================================================================ ENDURANCE: Drivers & Teams (classes, teams, drivers, entry list)
+function endGridView(main) {
+  const E = A.data.endurance, G = E.grid;
+  const st = computeEnduranceStandings(A.data);
+  const pointsFor = (car) => { for (const c of st) { const x = c.cars.find((k) => String(k.number) === String(car.number) && normName(k.team) === normName(G.teams.find((t) => t.id === car.team_id)?.name)); if (x) return x.points; } return 0; };
+  const opt = (arr, sel, empty) => `<option value="">${empty}</option>${arr.map((x) => `<option value="${esc(x.id)}" ${x.id === sel ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}`;
+  main.innerHTML = `${head({ title: 'Drivers & Teams', endPage: true, help: 'Classes, teams, drivers and the entry list of cars for Endurance. Each car has a number, team, class and its usual driver lineup — these fill the dropdowns when you enter results. Standings are calculated from results automatically.' })}
+  <div class="grid-cols">
+    <div class="panel">
+      <div class="grid-head"><h3>Classes <span class="muted small">(${G.classes.length})</span></h3><button class="btn btn-sm btn-primary" data-a="addClass">+ Add Class</button></div>
+      <table class="adm-table grid-table"><thead><tr><th>Class Name</th><th>Colour</th><th></th></tr></thead><tbody>
+        ${G.classes.map((c) => `<tr data-k="classes" data-id="${esc(c.id)}"><td><input data-f="name" value="${esc(c.name)}" placeholder="Class name"></td>
+          <td class="color-cell"><input type="color" data-f="color" value="${esc(c.color || '#888888')}"></td>
+          <td class="row-actions"><button class="btn btn-sm btn-ghost danger" data-a="del" title="Remove">✕</button></td></tr>`).join('')}
+      </tbody></table>
+    </div>
+    <div class="panel">
+      <div class="grid-head"><h3>Teams <span class="muted small">(${G.teams.length})</span></h3><button class="btn btn-sm btn-primary" data-a="addTeam">+ Add Team</button></div>
+      ${G.teams.length ? `<table class="adm-table grid-table"><thead><tr><th>Team Name</th><th>Our Team</th><th></th></tr></thead><tbody>
+        ${G.teams.map((t) => `<tr data-k="teams" data-id="${esc(t.id)}"><td><input data-f="name" value="${esc(t.name)}" placeholder="Team name"></td>
+          <td><label class="switch sm"><input type="checkbox" data-f="is_ours" ${t.is_ours ? 'checked' : ''}><span class="switch-ui"></span></label></td>
+          <td class="row-actions"><button class="btn btn-sm btn-ghost danger" data-a="del" title="Remove">✕</button></td></tr>`).join('')}
+      </tbody></table>` : '<p class="muted small">No teams yet. Add yours and switch on <b>Our Team</b>.</p>'}
+    </div>
+  </div>
+  <div class="grid-cols end-grid-2">
+    <div class="panel">
+      <div class="grid-head"><h3>Drivers <span class="muted small">(${G.drivers.length})</span></h3><button class="btn btn-sm btn-primary" data-a="addDriver">+ Add Driver</button></div>
+      ${G.drivers.length ? `<table class="adm-table grid-table"><thead><tr><th>Driver Name</th><th>Car</th><th></th></tr></thead><tbody>
+        ${G.drivers.map((d) => { const c = G.cars.find((k) => (k.drivers || []).includes(d.id)); return `<tr data-k="drivers" data-id="${esc(d.id)}"><td><input data-f="name" value="${esc(d.name)}" placeholder="Driver name"></td>
+          <td class="muted small">${c ? `#${esc(c.number || '?')}` : '—'}</td>
+          <td class="row-actions"><button class="btn btn-sm btn-ghost danger" data-a="del" title="Remove">✕</button></td></tr>`; }).join('')}
+      </tbody></table>` : '<p class="muted small">No drivers yet.</p>'}
+    </div>
+    <div class="panel">
+      <div class="grid-head"><h3>Entry List — Cars <span class="muted small">(${G.cars.length})</span></h3><button class="btn btn-sm btn-primary" data-a="addCar">+ Add Car</button></div>
+      ${G.cars.length ? `<table class="adm-table grid-table cars-table"><thead><tr><th>No.</th><th>Team</th><th>Class</th><th>Driver Lineup (up to 3)</th><th class="num">Pts</th><th></th></tr></thead><tbody>
+        ${G.cars.map((c) => `<tr data-k="cars" data-id="${esc(c.id)}">
+          <td><input data-f="number" value="${esc(c.number || '')}" class="num-in" placeholder="#"></td>
+          <td><select data-f="team_id">${opt(G.teams, c.team_id, '— Team —')}</select></td>
+          <td><select data-f="class_id">${opt(G.classes, c.class_id, '— Class —')}</select></td>
+          <td><div class="lineup-sel">${[0, 1, 2].map((k) => `<select data-f="driver" data-slot="${k}">${opt(G.drivers.filter((d) => d.id === (c.drivers || [])[k] || !G.cars.some((o) => (o.drivers || []).includes(d.id))), (c.drivers || [])[k], k ? `— Driver ${k + 1} (optional) —` : '— Driver 1 —')}</select>`).join('')}</div></td>
+          <td class="num muted">${pointsFor(c)}</td>
+          <td class="row-actions"><button class="btn btn-sm btn-ghost danger" data-a="del" title="Remove">✕</button></td></tr>`).join('')}
+      </tbody></table>` : '<p class="muted small">No cars yet. Add a team, class and drivers first, then add each car.</p>'}
+    </div>
+  </div>
+  <p class="small muted">Renaming a driver, team or class updates it in every saved result. Removing something keeps it in past results and the standings. A driver can be in one car at a time on the entry list — for one-off changes, edit the lineup inside that race's results.</p>`;
+
+  const item = (tr) => G[tr.dataset.k].find((x) => x.id === tr.dataset.id);
+  main.oninput = (e) => {
+    const tr = e.target.closest('tr[data-k]'), f = e.target.dataset.f; if (!tr || !['name', 'number'].includes(f)) return;
+    const it = item(tr), v = e.target.value.trim(); if (v || f === 'name') it[f] = v; else delete it[f]; setDirty();
+  };
+  main.onchange = (e) => {
+    const tr = e.target.closest('tr[data-k]'), f = e.target.dataset.f; if (!tr || !f) return;
+    const it = item(tr);
+    if (f === 'is_ours') { if (e.target.checked) it.is_ours = true; else delete it.is_ours; }
+    if (f === 'color') it.color = e.target.value;
+    if (f === 'team_id' || f === 'class_id') { if (e.target.value) it[f] = e.target.value; else delete it[f]; }
+    if (f === 'driver') { const d = [...(it.drivers || [])]; d[Number(e.target.dataset.slot)] = e.target.value || null; it.drivers = d.filter(Boolean); }
+    migrateEndurance(A.data); setDirty();
+    if (!['name', 'number'].includes(f)) endGridView(main);
+  };
+  main.onclick = async (e) => {
+    const b = e.target.closest('[data-a]'); if (!b) return;
+    const add = (k, obj, focus) => { G[k].push(obj); setDirty(); endGridView(main); $$(`tr[data-k="${k}"] ${focus}`, main).pop()?.focus(); };
+    if (b.dataset.a === 'addClass') return add('classes', { id: gid('cl'), name: '', color: '#888888' }, 'input[data-f="name"]');
+    if (b.dataset.a === 'addTeam') return add('teams', { id: gid('et'), name: '' }, 'input[data-f="name"]');
+    if (b.dataset.a === 'addDriver') return add('drivers', { id: gid('ed'), name: '' }, 'input[data-f="name"]');
+    if (b.dataset.a === 'addCar') return add('cars', { id: gid('ec'), drivers: [], ...(G.classes[0] ? { class_id: G.classes[0].id } : {}), ...(G.teams.find((t) => t.is_ours) ? { team_id: G.teams.find((t) => t.is_ours).id } : {}) }, 'input[data-f="number"]');
+    if (b.dataset.a === 'del') {
+      const tr = b.closest('tr[data-k]'), k = tr.dataset.k, it = item(tr);
+      const label = { classes: 'Class', teams: 'Team', drivers: 'Driver', cars: 'Car' }[k];
+      if (!(await uiConfirm(`${k === 'cars' ? `#${it.number || '?'}` : it.name || `This ${label.toLowerCase()}`} will be removed from the list. Past results keep it.`, { title: `Remove ${label}?`, ok: 'Remove', danger: true }))) return;
+      G[k].splice(G[k].indexOf(it), 1);
+      if (k === 'drivers') G.cars.forEach((c) => { c.drivers = (c.drivers || []).filter((x) => x !== it.id); });
+      if (k === 'teams') G.cars.forEach((c) => { if (c.team_id === it.id) delete c.team_id; });
+      if (k === 'classes') G.cars.forEach((c) => { if (c.class_id === it.id) delete c.class_id; });
+      setDirty(); endGridView(main);
+    }
+  };
+}
+
+// ================================================================ ENDURANCE: points system
+function endPointsView(main) {
+  const P = A.data.endurance.points;
+  main.innerHTML = `${head({ title: 'Points System', endPage: true, help: 'Points for each finishing position inside a class, plus the class pole bonus. Set a race\'s multiplier (e.g. double points for Le Mans) when you edit the race in Race Schedule.' }, '<button class="btn btn-ghost" data-a="reset">Reset to Defaults</button>')}
+    <fieldset class="panel pts-fs"><legend>Points per Class Position</legend>
+      <div class="pts-grid">${Array.from({ length: 20 }, (_, i) => `<label><span>P${i + 1}</span><input type="number" min="0" step="any" data-i="${i}" value="${esc(P.scale[i] ?? '')}" placeholder="0"></label>`).join('')}</div></fieldset>
+    <fieldset class="panel pts-fs"><legend>Bonus</legend>
+      <div class="fgrid"><label class="field half">Class pole position bonus<input type="number" min="0" step="any" data-x="pole" value="${esc(P.pole ?? 0)}"><small class="muted">Given to the car that qualifies first in its class (and its drivers).</small></label></div>
+    </fieldset>
+    <p class="small muted" id="ptsEx"></p>`;
+  const ex = () => { const w = Number(P.scale[0]) || 0; $('#ptsEx').textContent = `Example: a class win scores ${w} points (${w * 2} at a double-points race); winning from class pole scores ${w + (Number(P.pole) || 0)}.`; };
+  const trim = (a) => { const o = [...a]; while (o.length && !Number(o[o.length - 1])) o.pop(); return o; };
+  main.oninput = (e) => {
+    const t = e.target;
+    if (t.dataset.i !== undefined) { const a = [...P.scale]; while (a.length < 20) a.push(0); a[Number(t.dataset.i)] = t.value === '' ? 0 : Number(t.value); P.scale = trim(a); }
+    if (t.dataset.x) P[t.dataset.x] = t.value === '' ? 0 : Number(t.value);
+    setDirty(); ex();
+  };
+  main.onclick = async (e) => {
+    if (e.target.closest('[data-a="reset"]') && await uiConfirm('Class positions 25-18-15-12-10-8-6-4-2-1 and +1 for class pole.', { title: 'Reset to Defaults?', ok: 'Reset' })) {
+      A.data.endurance.points = JSON.parse(JSON.stringify(DEFAULT_END_POINTS)); setDirty(); endPointsView(main);
+    }
+  };
+  ex();
 }
 
 // ================================================================ admins (Firebase)

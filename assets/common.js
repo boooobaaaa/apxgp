@@ -258,3 +258,157 @@ function computeStandings(d) {
     constructors: rank([...T.values()]).map((e) => ({ pos: e.pos, team: e.team, points: e.points, is_ours: e.is_ours })),
   };
 }
+
+// ================================================================ ENDURANCE category
+// data.endurance = {
+//   races:  [{ id, round, name, circuit, country, date, time, duration, multiplier, status, result, results: { quali: [row], race: [row] } }]
+//   grid:   { classes: [{ id, name, color }], teams: [{ id, name, is_ours }], drivers: [{ id, name }],
+//             cars: [{ id, number, team_id, class_id, model, drivers: [driverId…] }] }   ← the entry list
+//   points: { scale: [25,18,…], pole: 1 }
+// }
+// Result row (one per car, in overall finishing order):
+//   { ci: carId, n: '7', ti, t: team name, cl: classId, cln: class name, dri: [driverIds], dr: [driver names], laps, time, st }
+const CATEGORIES = [{ key: 'gp', label: 'APX GP' }, { key: 'endurance', label: 'Endurance' }];
+const END_SESSIONS = [
+  { key: 'quali', label: 'Qualifying', kind: 'quali' },
+  { key: 'race', label: 'Race', kind: 'race' },
+];
+const DEFAULT_END_POINTS = { scale: [25, 18, 15, 12, 10, 8, 6, 4, 2, 1], pole: 1 };
+const DEFAULT_CLASSES = [['Hypercar', '#e10600'], ['LMP2', '#2a7fff'], ['LMGT3', '#f5a400']];
+
+function migrateEndurance(d) {
+  const E = d.endurance = d.endurance || {};
+  E.races = Array.isArray(E.races) ? E.races : [];
+  E.grid = E.grid || {};
+  if (!Array.isArray(E.grid.classes)) E.grid.classes = DEFAULT_CLASSES.map(([name, color]) => ({ id: gid('cl'), name, color }));
+  for (const k of ['teams', 'drivers', 'cars']) E.grid[k] = Array.isArray(E.grid[k]) ? E.grid[k] : [];
+  E.points = E.points || JSON.parse(JSON.stringify(DEFAULT_END_POINTS));
+  // keep names stored in results in step with the entry list (so renames carry through)
+  const G = E.grid, by = (arr) => new Map(arr.map((x) => [x.id, x]));
+  const D = by(G.drivers), T = by(G.teams), C = by(G.classes), K = by(G.cars);
+  for (const r of E.races) for (const rows of Object.values(r.results || {})) for (const row of rows) {
+    if (row.ci && K.has(row.ci) && !row.n) row.n = K.get(row.ci).number;
+    if (row.ti && T.has(row.ti)) row.t = T.get(row.ti).name;
+    if (row.cl && C.has(row.cl)) row.cln = C.get(row.cl).name;
+    if (Array.isArray(row.dri)) row.dr = row.dri.map((id, i) => D.get(id)?.name || row.dr?.[i] || '').filter(Boolean);
+  }
+  return d;
+}
+const endClass = (E, id) => E.grid.classes.find((c) => c.id === id);
+const endHasResults = (race) => !!race.results && END_SESSIONS.some((s) => (race.results[s.key] || []).length);
+const endAnyResults = (E) => E.races.some(endHasResults);
+
+/** Rows with their position inside their class added (classPos). Unclassified cars get no class position. */
+function withClassPos(rows) {
+  const n = {};
+  return rows.map((row, i) => {
+    const st = row.st || 'fin', key = row.cl || row.cln || '_';
+    const classPos = st === 'fin' ? (n[key] = (n[key] || 0) + 1) : null;
+    return { ...row, overall: i + 1, classPos };
+  });
+}
+/** Points a car (and each of its drivers) scores in one race. */
+function endRacePoints(race, row, classPos, P = DEFAULT_END_POINTS) {
+  if (!classPos) return 0;
+  const m = Number(race.multiplier) || 1;
+  return (Number((P.scale || DEFAULT_END_POINTS.scale)[classPos - 1]) || 0) * m;
+}
+/** Class pole sitters from qualifying (first car of each class). */
+function endPoles(race) {
+  const seen = new Set(), out = new Set();
+  for (const row of race.results?.quali || []) { const k = row.cl || row.cln || '_'; if (!seen.has(k)) { seen.add(k); out.add(row.ci || `${row.n}|${row.t}`); } }
+  return out;
+}
+const carKey = (row) => row.ci || `${row.n}|${row.t}`;
+const round1 = (x) => Math.round(x * 10) / 10;
+
+/** Per-class championships for cars and drivers, calculated from every race result. */
+function computeEnduranceStandings(d) {
+  const E = d.endurance, P = E.points || DEFAULT_END_POINTS, G = E.grid;
+  const ourTeams = new Set(G.teams.filter((t) => t.is_ours).map((t) => normName(t.name)));
+  const classes = new Map(G.classes.map((c) => [c.id, { id: c.id, name: c.name, color: c.color, cars: new Map(), drivers: new Map() }]));
+  const cls = (id, name) => {
+    if (id && classes.has(id)) return classes.get(id);
+    const found = [...classes.values()].find((c) => normName(c.name) === normName(name));
+    if (found) return found;
+    const k = id || name || 'Overall'; classes.set(k, { id: k, name: name || 'Overall', cars: new Map(), drivers: new Map() }); return classes.get(k);
+  };
+  const carE = (c, key, init) => { if (!c.cars.has(key)) c.cars.set(key, { ...init, points: 0, fin: [] }); return c.cars.get(key); };
+  const drvE = (c, name, init) => { const k = normName(name); if (!c.drivers.has(k)) c.drivers.set(k, { driver: name, ...init, points: 0, fin: [] }); return c.drivers.get(k); };
+  // everyone on the entry list appears, even before scoring
+  for (const car of G.cars) {
+    const c = cls(car.class_id), team = G.teams.find((t) => t.id === car.team_id)?.name || '';
+    const names = (car.drivers || []).map((id) => G.drivers.find((x) => x.id === id)?.name).filter(Boolean);
+    carE(c, car.id, { number: car.number, team, drivers: names });
+    names.forEach((n) => drvE(c, n, { team, number: car.number }));
+  }
+  for (const race of E.races) {
+    const poles = endPoles(race);
+    withClassPos(race.results?.race || []).forEach((row) => {
+      const c = cls(row.cl, row.cln), pts = endRacePoints(race, row, row.classPos, P) + (poles.has(carKey(row)) ? Number(P.pole) || 0 : 0);
+      const ce = carE(c, carKey(row), { number: row.n, team: row.t, drivers: row.dr || [] });
+      ce.points += pts; if (row.classPos) ce.fin.push(row.classPos);
+      for (const n of row.dr || []) { const de = drvE(c, n, { team: row.t, number: row.n }); de.points += pts; if (row.classPos) de.fin.push(row.classPos); }
+    });
+  }
+  const countback = (a, b) => { for (let p = 1; p <= 40; p++) { const x = a.fin.filter((f) => f === p).length, y = b.fin.filter((f) => f === p).length; if (x !== y) return y - x; } return 0; };
+  // equal points and identical results share a position (e.g. drivers of the same car)
+  const rank = (m) => {
+    const out = [];
+    [...m.values()].sort((a, b) => b.points - a.points || countback(a, b)).forEach((e, i) => {
+      const prev = out[i - 1], tied = prev && round1(prev.points) === round1(e.points) && countback(prev, e) === 0;
+      out.push({ ...e, pos: tied ? prev.pos : i + 1, points: round1(e.points), is_ours: ourTeams.has(normName(e.team)) });
+    });
+    return out;
+  };
+  return [...classes.values()].filter((c) => c.cars.size || c.drivers.size).map((c) => ({ id: c.id, name: c.name, color: c.color, cars: rank(c.cars), drivers: rank(c.drivers) }));
+}
+
+/** Season stats for one endurance driver (by name). */
+function computeEnduranceStats(d, name) {
+  const E = d.endurance, P = E.points || DEFAULT_END_POINTS, n = normName(name);
+  const s = { races: 0, class_wins: 0, class_podiums: 0, overall_wins: 0, poles: 0, points: 0, laps: 0, dnfs: 0 };
+  const fin = [], q = [];
+  let any = false;
+  const inCar = (row) => (row.dr || []).some((x) => normName(x) === n);
+  for (const race of E.races) {
+    const poles = endPoles(race);
+    const qr = withClassPos((race.results?.quali || []).map((r) => ({ ...r, st: 'fin' }))).find(inCar);
+    if (qr) { any = true; q.push(qr.classPos); if (qr.classPos === 1) s.poles++; }
+    const rr = withClassPos(race.results?.race || []).find(inCar);
+    if (!rr) continue;
+    any = true;
+    const st = rr.st || 'fin';
+    if (st !== 'dns') s.races++;
+    s.laps += Number(rr.laps) || 0;
+    if (st === 'fin') {
+      fin.push(rr.classPos);
+      if (rr.classPos === 1) s.class_wins++;
+      if (rr.classPos <= 3) s.class_podiums++;
+      if (rr.overall === 1) s.overall_wins++;
+    } else if (st === 'dnf' || st === 'dsq') s.dnfs++;
+    s.points += endRacePoints(race, rr, rr.classPos, P) + (poles.has(carKey(rr)) ? Number(P.pole) || 0 : 0);
+  }
+  const avg = (a) => (a.length ? round1(a.reduce((x, y) => x + y, 0) / a.length) : undefined);
+  s.points = round1(s.points);
+  s.best_finish = fin.length ? Math.min(...fin) : undefined;
+  s.avg_finish = avg(fin);
+  s.avg_quali = avg(q);
+  s.hasResults = any;
+  return s;
+}
+const END_STAT_FIELDS = [
+  { key: 'races', label: 'Races' }, { key: 'class_wins', label: 'Class Wins' }, { key: 'class_podiums', label: 'Class Podiums' },
+  { key: 'overall_wins', label: 'Overall Wins' }, { key: 'poles', label: 'Class Poles' }, { key: 'points', label: 'Points' },
+  { key: 'laps', label: 'Laps Completed' }, { key: 'avg_quali', label: 'Avg. Class Qualifying', lowerBetter: true },
+  { key: 'avg_finish', label: 'Avg. Class Finish', lowerBetter: true }, { key: 'best_finish', label: 'Best Class Finish', lowerBetter: true },
+  { key: 'dnfs', label: 'DNFs', lowerBetter: true },
+];
+/** Endurance drivers that belong to our teams (for Compare). */
+function endOurDrivers(d) {
+  const G = d.endurance.grid, ours = new Set(G.teams.filter((t) => t.is_ours).map((t) => t.id));
+  const ids = new Set(G.cars.filter((c) => ours.has(c.team_id)).flatMap((c) => c.drivers || []));
+  return G.drivers.filter((x) => ids.has(x.id));
+}
+/** Is this item (news, photo, member) shown for the given category? Untagged = both. */
+const inCategory = (item, cat) => !item.category || item.category === 'both' || item.category === cat;
